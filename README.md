@@ -85,7 +85,7 @@ See [`urop_core/DATA_NOTES.md`](urop_core/DATA_NOTES.md) for full raw-file diagn
 - **SoC Transfer Learning (6-fold LOCO):**
   - **`TL_TwoPhase_GRU`** consistently outperforms `TargetOnly_GRU` at every budget: `5%` (`0.0454 ± 0.0070` vs `0.0716 ± 0.0297`), `10%` (`0.0421 ± 0.0073` vs `0.0588 ± 0.0107`), `25%` (`0.0365 ± 0.0092` vs `0.0539 ± 0.0210`), `50%` (`0.0348 ± 0.0071` vs `0.0399 ± 0.0085`).
 - **SoH Zero-Shot & Transfer Learning (Exploratory · Pooled Workbooks · Tabular Only):**
-  - Zero-shot `Li → Na` XGBoost improves from Raw `0.2286` → Aligned **`0.0691`** (`0.0298` at room temperature `25 °C` vs `0.0984` at `-15 °C`).
+  - Zero-shot `Li → Na` XGBoost improves from Raw `0.2286` → Aligned **`0.0691`** (single-workbook transductive CORAL: **`0.0304`** at room temperature `25 °C` vs **`0.0981`** at `-15 °C`).
   - Cross-workbook SoH TL (`25 °C ↔ -15 °C`, tabular only) exhibits **negative transfer** (`TL_Residual_XGBoost = 0.0808–0.1028` vs `ZeroShot = 0.0649` vs `TargetOnly = 0.0345–0.0409`) due to the 40 °C temperature shift confounded across the two workbooks.
 
 ### Proposal §5.7 Adaptive Charging Simulation Study (2-RC Mismatched Electro-Thermal Plant)

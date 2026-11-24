@@ -833,24 +833,39 @@ def run_task_within_and_cross_chemistry(
                         }
                     )
 
-        # Per-cell / per-workbook breakdown for Li -> Na (shows every single target unit honestly!)
+        # Per-cell / per-workbook breakdown for Li -> Na using strictly single-unit transductive CORAL
+        # (adapter sees ONLY source train + this single held-out unit's unlabeled inputs; zero target labels)
         if src_chem == "li_ion" and tgt_chem == "na_ion":
             xgb_raw = within_tab_raw["li_ion"]["XGBoost"]
             xgb_phys = within_tab_phys["li_ion"]["XGBoost"]
             for unit_id in sorted(tgt_eval_df["cell_id"].unique().to_list()):
                 sub_u = tgt_eval_df.filter(pl.col("cell_id") == unit_id)
+                assert_no_cell_overlap(
+                    src_split.train_cells, src_split.val_cells, [unit_id], context=f"cross_unit_{task_name}_{unit_id}"
+                )
                 yu = sub_u[target_col].to_numpy()
                 m_raw = regression_metrics(yu, xgb_raw.predict(sub_u.select(raw_cols).to_numpy()))
                 X_u_phys = sub_u.select(phys_cols).to_numpy()
                 m_phys = regression_metrics(yu, xgb_phys.predict(X_u_phys))
+                # Fit transductive unsupervised CORAL strictly on (source train, this single target unit's unlabeled X)
+                unit_adapter = CrossChemistryDomainAdapter(
+                    src_ocv_curve=empirical_ocvs.get(src_chem) if is_soc else None,
+                    tgt_ocv_curve=empirical_ocvs.get(tgt_chem) if is_soc else None,
+                    use_ocv_warp=is_soc,
+                    use_coral=True,
+                    coral_reg=0.10,
+                    coral_shrinkage=0.25 if is_soc else 0.15,
+                    align_mean=False,
+                ).fit(X_src_tr_phys, X_u_phys, phys_cols)
                 m_aln = regression_metrics(
-                    yu, xgb_phys.predict(adapter.transform_target(X_u_phys), already_scaled=True)
+                    yu, xgb_phys.predict(unit_adapter.transform_target(X_u_phys), already_scaled=True)
                 )
                 cross_per_unit_rows.append(
                     {
                         "task": task_name,
                         "direction": direction,
                         "target_unit": unit_id,
+                        "alignment_scope": "single_unit_transductive_coral",
                         "n_rows": int(sub_u.height),
                         "raw_rmse": m_raw["rmse"],
                         "raw_r2": m_raw["r2"],

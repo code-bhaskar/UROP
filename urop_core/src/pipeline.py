@@ -40,26 +40,27 @@ def run_full_pipeline(cfg: PipelineConfig) -> dict:
     t_start = time.perf_counter()
     cfg.ensure_dirs()
 
-    print("[1/7] Columnar Lakehouse: Ingesting REAL NASA Li-ion & Wang et al. Na-ion datasets to Bronze Parquet...")
+    print("[1/7] Columnar Lakehouse: Ingesting REAL NASA Li-ion, Wang Na-ion & Mendeley datasets to Bronze Parquet...", flush=True)
     inv, data_mode, bronze_ts, bronze_cyc = ingest_to_bronze(cfg)
-    print(f"      Mode={data_mode} | Dataset inventory: {inv.pulled_files}/{inv.total_files} real files ({inv.to_dict()['total_declared_mb']} MB)")
+    print(f"      Mode={data_mode} | Dataset inventory: {inv.pulled_files}/{inv.total_files} real files ({inv.to_dict()['total_declared_mb']} MB)", flush=True)
 
-    print("[2/7] Data Mining Quality Audit: Bronze -> Silver cleaning (nulls, duplicates, bounds, IsolationForest)...")
+    print("[2/7] Data Mining Quality Audit: Bronze -> Silver cleaning (nulls, duplicates, bounds, IsolationForest)...", flush=True)
     silver_ts, silver_cyc, audit_report = audit_and_clean_bronze_to_silver(cfg, bronze_ts, bronze_cyc)
     duckdb_analytics = run_duckdb_bigdata_analytics(silver_ts, silver_cyc, cfg.tables_dir)
     print(
         f"      Silver TS={audit_report['timeseries']['silver_rows']:,} rows "
-        f"(retention {audit_report['timeseries']['retention_rate_pct']}%) | Silver Cycles={audit_report['cycles']['silver_rows']:,}"
+        f"(retention {audit_report['timeseries']['retention_rate_pct']}%) | Silver Cycles={audit_report['cycles']['silver_rows']:,}",
+        flush=True,
     )
 
-    print("[3/7] Physics Feature Engineering & Unsupervised Domain Mining (Silver -> Gold Parquet)...")
+    print("[3/7] Physics Feature Engineering & Unsupervised Domain Mining (Silver -> Gold Parquet)...", flush=True)
     gold_soc_path, gold_soh_path = build_gold_features(cfg, silver_ts, silver_cyc)
     soc_df = pl.read_parquet(gold_soc_path)
     soh_df = pl.read_parquet(gold_soh_path)
     mining_results = run_data_mining_suite(cfg, soc_df, soh_df, cfg.tables_dir)
-    print(f"      K-Means operating-regime Silhouette={mining_results['kmeans_silhouette']:.4f}")
+    print(f"      K-Means operating-regime Silhouette={mining_results['kmeans_silhouette']:.4f}", flush=True)
 
-    print("[4/7] Within-Chemistry, 3-Tier Cross-Chemistry & Repeated Cell-Level CV (SoC & SoH)...")
+    print("[4/7] Within-Chemistry, 3-Tier Cross-Chemistry & Repeated Cell-Level CV (SoC & SoH)...", flush=True)
     soc_bundle = run_task_within_and_cross_chemistry(cfg, soc_df, task_name="SoC")
     soh_bundle = run_task_within_and_cross_chemistry(cfg, soh_df, task_name="SoH")
 
