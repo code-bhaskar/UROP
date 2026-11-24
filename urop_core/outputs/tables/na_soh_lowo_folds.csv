@@ -1,0 +1,7 @@
+task,chemistry,train_unit,test_unit,model,evaluation_mode,val_rmse,mae,rmse,r2,train_time_s,infer_time_ms
+SoH,na_ion,na_nfm_m15C,na_nfm_25C,LinearRegression,exploratory_lowo_temp_confounded,0.00085,0.43344,0.43463,-182.68219,0.0107,0.16
+SoH,na_ion,na_nfm_m15C,na_nfm_25C,RandomForest,exploratory_lowo_temp_confounded,0.02177,0.03473,0.04324,-0.81777,0.6356,43.264
+SoH,na_ion,na_nfm_m15C,na_nfm_25C,XGBoost,exploratory_lowo_temp_confounded,0.02062,0.04075,0.04912,-1.3458,0.1244,1.662
+SoH,na_ion,na_nfm_25C,na_nfm_m15C,LinearRegression,exploratory_lowo_temp_confounded,0.00064,0.08551,0.08962,-10.16326,0.0105,0.15
+SoH,na_ion,na_nfm_25C,na_nfm_m15C,RandomForest,exploratory_lowo_temp_confounded,0.01658,0.01326,0.01609,0.64015,0.7415,32.992
+SoH,na_ion,na_nfm_25C,na_nfm_m15C,XGBoost,exploratory_lowo_temp_confounded,0.01524,0.01545,0.01867,0.51568,0.1453,1.558

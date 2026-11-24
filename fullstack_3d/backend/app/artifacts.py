@@ -24,6 +24,10 @@ ALLOWED_TABLES: dict[str, str] = {
     "bigdata_chemistry": "bigdata_chemistry_summary.csv",
     "bigdata_aging": "bigdata_aging_summary.csv",
     "bigdata_protocol": "bigdata_protocol_temp_summary.csv",
+    "na_soc_loco_per_cell": "na_soc_loco_per_cell.csv",
+    "na_soh_lowo_folds": "na_soh_lowo_folds.csv",
+    "cross_chemistry_per_unit": "cross_chemistry_per_unit.csv",
+    "external_ncm_soh_test": "external_ncm_soh_test.csv",
 }
 
 

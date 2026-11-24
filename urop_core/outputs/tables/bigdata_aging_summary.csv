@@ -1,3 +1,4 @@
-chemistry,n_aged_cells,max_cycles,avg_initial_soh,avg_final_soh,avg_fade_pct_per_cycle,avg_r_int_ohm,avg_temp_rise_c
-li_ion,36,408,0.917,0.7649,0.0849,0.1193,11.5
-na_ion,6,601,1.0023,0.8862,0.0351,0.023,3.73
+chemistry,data_provenance,n_units,n_records,min_soh,mean_soh,max_soh,avg_r_int_ohm,avg_temp_rise_c
+li_ion,ordered_per_cell,33,2410,0.4926,0.8512,1.0482,0.1586,15.59
+li_ion,pooled_unordered,1,3351,0.7559,0.9184,1.0,0.0357,2.81
+na_ion,pooled_unordered,2,2739,0.8553,0.9472,1.0,0.0139,2.26

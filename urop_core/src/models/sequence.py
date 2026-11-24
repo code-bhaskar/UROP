@@ -86,7 +86,18 @@ def build_segmented_sequences(
     seq_len: int,
     transform_fn=None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Construct causal sliding windows strictly inside contiguous segments (never crossing cell/cycle boundaries)."""
+    """Construct causal sliding windows strictly inside contiguous segments (never crossing cell/cycle boundaries).
+
+    Refuses ``pooled_unordered`` datasets because pooled/sorted rows have no genuine temporal cycle order.
+    """
+    if "data_provenance" in df.columns:
+        provs = set(df["data_provenance"].unique().to_list())
+        if "pooled_unordered" in provs:
+            raise ValueError(
+                "Sequence window construction refused: dataset contains 'pooled_unordered' rows "
+                "(no genuine cell/cycle temporal order; sequence models would leak row ordering)."
+            )
+
     X_list: list[np.ndarray] = []
     y_list: list[np.ndarray] = []
 

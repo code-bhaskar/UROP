@@ -95,17 +95,22 @@ def audit_and_clean_bronze_to_silver(
         ["chemistry", "cell_id", "protocol", "cycle_number", "time_s"]
     )
 
-    # Clean cycle table
+    # Clean cycle table (preserve pooled_unordered workbooks where cycle_number is null)
     n_raw_cyc = cyc_raw.height
-    cyc_silver = (
-        cyc_raw.unique(subset=["chemistry", "cell_id", "cycle_number"], keep="first")
-        .filter(
-            pl.col("soh").is_between(0.45, 1.05)
-            & pl.col("discharge_capacity_ah").gt(0.1)
-            & pl.col("r_int_est_ohm").is_between(0.001, 2.0)
+    if n_raw_cyc > 0:
+        dedup_cols = ["chemistry", "cell_id", "sample_idx"] if "sample_idx" in cyc_raw.columns else ["chemistry", "cell_id", "cycle_number"]
+        sort_cols = dedup_cols
+        cyc_silver = (
+            cyc_raw.unique(subset=dedup_cols, keep="first")
+            .filter(
+                pl.col("soh").is_between(0.45, 1.05)
+                & pl.col("discharge_capacity_ah").gt(0.1)
+                & pl.col("r_int_est_ohm").is_between(0.001, 2.0)
+            )
+            .sort(sort_cols)
         )
-        .sort(["chemistry", "cell_id", "cycle_number"])
-    )
+    else:
+        cyc_silver = cyc_raw
 
     silver_ts_path = cfg.lake_dir / "silver" / "timeseries.parquet"
     silver_cyc_path = cfg.lake_dir / "silver" / "cycles.parquet"

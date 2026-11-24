@@ -1,3 +1,4 @@
-*.CSV !text !filter !merge !diff
-*.csv !text !filter !merge !diff
-*.zip !text !filter !merge !diff
+# Laboratory datasets (.zip, .csv, .CSV, .xlsx) are committed directly as plain Git files (Git LFS is not used).
+# Treat binary archive/spreadsheet files strictly as binary.
+*.zip binary
+*.xlsx binary

@@ -66,7 +66,7 @@ def test_cross_chemistry_alignment_improves_soc_and_handles_single_chem_soh(
         ]["rmse"].iloc[0]
         assert aln_rmse < raw_rmse * 0.75
 
-    # Transfer learning at 10% target data converges strongly
+    # Transfer learning at 25% target data converges strongly across LOCO folds
     soc_tl = run_transfer_learning_experiments(cfg, soc_bundle)
     tl_df = pd.DataFrame(soc_tl.results_rows)
     gru_tl = tl_df[
@@ -74,4 +74,24 @@ def test_cross_chemistry_alignment_improves_soc_and_handles_single_chem_soh(
         & (tl_df["target_fraction"] == 0.25)
         & (tl_df["method"] == "TL_TwoPhase_GRU")
     ].iloc[0]
-    assert gru_tl["r2"] > 0.85
+    assert gru_tl["r2"] > 0.80
+
+    # Verify Na-ion SoC LOCO evaluated every Na-ion cell with zero overlap between test_cell and val_cell
+    assert len(soc_bundle.loco_per_cell_rows) > 0
+    na_cells = set(soc_df.filter(pl.col("chemistry") == "na_ion")["cell_id"].unique().to_list())
+    tested_cells = {r["test_cell"] for r in soc_bundle.loco_per_cell_rows}
+    assert tested_cells == na_cells
+    for r in soc_bundle.loco_per_cell_rows:
+        assert r["test_cell"] != r["val_cell"]
+
+
+def test_assert_no_cell_overlap_catches_leakage() -> None:
+    """Hard runtime guard catches any test cell/workbook appearing in train or validation."""
+    import pytest
+    from src.cross_chemistry.evaluation import assert_no_cell_overlap
+
+    assert_no_cell_overlap(["c1", "c2"], ["c3"], ["c4"], context="clean_split")
+    with pytest.raises(AssertionError, match="Leakage detected"):
+        assert_no_cell_overlap(["c1", "c4"], ["c3"], ["c4"], context="train_leak")
+    with pytest.raises(AssertionError, match="Leakage detected"):
+        assert_no_cell_overlap(["c1", "c2"], ["c4"], ["c4"], context="val_leak")

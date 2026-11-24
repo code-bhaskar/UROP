@@ -12,10 +12,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { CrossRow, DomainShiftRow, PcaTaskCloud, TransferRow } from "../types";
+import type { CrossRow, DomainShiftRow, OverviewSummary, PcaTaskCloud, TransferRow } from "../types";
 import { CrossChemManifold3D } from "./CrossChemManifold3D";
 
 interface CrossChemistryViewProps {
+  summary: OverviewSummary;
   manifold: Record<"SoC" | "SoH", PcaTaskCloud>;
   domainShift: DomainShiftRow[];
   crossRows: CrossRow[];
@@ -23,6 +24,7 @@ interface CrossChemistryViewProps {
 }
 
 export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
+  summary,
   manifold,
   domainShift,
   crossRows,
@@ -32,6 +34,10 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
   const [direction, setDirection] = useState<"li_ion_to_na_ion" | "na_ion_to_li_ion">("li_ion_to_na_ion");
   const [morphFactor, setMorphFactor] = useState<number>(1.0);
   const [animating, setAnimating] = useState<boolean>(false);
+
+  const naSohUnits = summary.unit_counts?.SoH?.na_ion ?? 2;
+  const isSohExploratory =
+    summary.evaluation_modes?.SoH_cross_chemistry === "exploratory_pooled" || naSohUnits < 3;
 
   useEffect(() => {
     if (!animating) return;
@@ -65,9 +71,12 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
     };
   }, [domainShift, task, morphFactor]);
 
-  // Build 3-tier grouped bar chart data
+  // Build 3-tier grouped bar chart data (tabular only on exploratory pooled SoH)
   const ablationData = useMemo(() => {
-    const models = ["RandomForest", "XGBoost", "LSTM", "GRU"];
+    const models =
+      task === "SoH" && isSohExploratory
+        ? ["LinearRegression", "RandomForest", "XGBoost"]
+        : ["RandomForest", "XGBoost", "LSTM", "GRU"];
     return models.map((m) => {
       const find = (tier: string) =>
         crossRows.find((r) => r.task === task && r.direction === direction && r.model === m && r.tier === tier);
@@ -79,7 +88,7 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
         AlignedR2: find("3_physics_ocv_coral_zero_shot")?.r2 ?? 0,
       };
     });
-  }, [crossRows, task, direction]);
+  }, [crossRows, task, direction, isSohExploratory]);
 
   // Build Few-Shot Transfer Learning chart data
   const tlChartData = useMemo(() => {
@@ -125,7 +134,7 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
             </button>
             {manifold.SoH && (
               <button className={`btn ${task === "SoH" ? "active" : ""}`} onClick={() => setTask("SoH")}>
-                Task: SoH
+                Task: SoH{isSohExploratory ? " (Exploratory)" : ""}
               </button>
             )}
             <button
@@ -144,6 +153,22 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
         </div>
       </div>
 
+      {task === "SoH" && isSohExploratory && (
+        <div
+          className="disclaimer-banner"
+          style={{
+            borderColor: "rgba(245, 158, 11, 0.55)",
+            background: "rgba(245, 158, 11, 0.10)",
+            fontSize: 12.5,
+          }}
+        >
+          <strong>Exploratory · Pooled Workbooks Caveat:</strong> Na-ion SoH contains only{" "}
+          <strong>{naSohUnits} pooled Mendeley NFM workbooks</strong> (25 °C vs −15 °C, temperature-confounded) without
+          cell IDs or cycle order. Sequence models (LSTM/GRU) are disabled; tabular models only; NASA (2 A) vs Mendeley
+          (1C) protocols differ; cross-workbook Transfer Learning evaluates strictly across opposite-temperature workbooks.
+        </div>
+      )}
+
       {/* 3D Interactive PCA Feature Manifold Morph */}
       <div className="lab-hero-grid">
         <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
@@ -151,7 +176,8 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
             <div>
               <h3 className="panel-title">
                 <Layers size={16} className="text-violet" />
-                3D Feature Manifold Morph ({task}: Li-ion Cyan vs Na-ion Amber)
+                3D Feature Manifold Morph ({task}
+                {task === "SoH" && isSohExploratory ? " — Exploratory, Pooled Workbooks" : ""}: Li-ion Cyan vs Na-ion Amber)
               </h3>
               <p className="panel-subtitle">
                 Drag slider or click Animate to morph 1,000 real 3D PCA samples from Raw Features → Physics+OCV+CORAL Aligned.
@@ -270,7 +296,11 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
                 Few-Shot Transfer Learning Curves ({task}:{" "}
                 {direction === "li_ion_to_na_ion" ? "Li-ion → Na-ion" : "Na-ion → Li-ion"})
               </h3>
-              <p className="panel-subtitle">Test RMSE vs labeled target training budget (5% to 50%).</p>
+              <p className="panel-subtitle">
+                {task === "SoH" && isSohExploratory
+                  ? "Exploratory cross-workbook (25 °C ↔ −15 °C, tabular only) RMSE vs adaptation fraction."
+                  : "6-fold Leave-One-Cell-Out Test RMSE vs labeled target training budget (5% to 50%)."}
+              </p>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={290}>
@@ -283,8 +313,12 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
               <Line type="monotone" dataKey="TargetOnly_XGB" name="TargetOnly XGB" stroke="#94a3b8" strokeDasharray="5 4" strokeWidth={2} />
               <Line type="monotone" dataKey="TL_Residual_XGB" name="TL-Residual XGB" stroke="#10b981" strokeWidth={2.3} />
               <Line type="monotone" dataKey="TL_WarmStart_XGB" name="TL-WarmStart XGB" stroke="#38bdf8" strokeWidth={2} />
-              <Line type="monotone" dataKey="TargetOnly_GRU" name="TargetOnly GRU" stroke="#f43f5e" strokeDasharray="3 3" strokeWidth={2} />
-              <Line type="monotone" dataKey="TL_TwoPhase_GRU" name="TL-TwoPhase GRU" stroke="#a78bfa" strokeWidth={2.6} />
+              {!(task === "SoH" && isSohExploratory) && (
+                <>
+                  <Line type="monotone" dataKey="TargetOnly_GRU" name="TargetOnly GRU" stroke="#f43f5e" strokeDasharray="3 3" strokeWidth={2} />
+                  <Line type="monotone" dataKey="TL_TwoPhase_GRU" name="TL-TwoPhase GRU" stroke="#a78bfa" strokeWidth={2.6} />
+                </>
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>

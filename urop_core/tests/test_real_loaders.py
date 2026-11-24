@@ -168,15 +168,41 @@ def test_real_mendeley_xlsx_loader_extracts_non_leaky_degradation(tmp_path: Path
 
     assert cyc_df.height >= 100
     assert set(cyc_df["chemistry"].unique().to_list()) == {"na_ion"}
-    assert cyc_df["cell_id"].n_unique() == 3
+    # Problem 1 audit: at most 1 unit per workbook (no fabricated KMeans sub-cells)
+    assert cyc_df["cell_id"].n_unique() == 1
+    assert cyc_df["cell_id"][0] == "na_nfm_25C"
+    assert cyc_df["cycle_number"].null_count() == cyc_df.height
+    assert set(cyc_df["data_provenance"].unique().to_list()) == {"pooled_unordered"}
     assert set(cyc_df["data_source"].unique().to_list()) == {"real_dataset"}
     assert float(cyc_df["soh"].max()) <= 1.05
     assert float(cyc_df["soh"].min()) < 0.92
     assert float(cyc_df["r_int_est_ohm"].min()) >= 0.005
 
+    # Sequence windowing MUST refuse pooled_unordered data
+    import pytest
+    from src.models.sequence import build_segmented_sequences
 
-def test_zero_fake_simulator_anywhere_in_repo() -> None:
-    """Strict repo-wide audit: physics_simulator.py is deleted and ZERO source files import it."""
+    with pytest.raises(ValueError, match="pooled_unordered"):
+        build_segmented_sequences(cyc_df, ["r_int_est_ohm", "discharge_energy_wh"], "soh", ["cell_id"], seq_len=4)
+
+
+def test_detect_pooled_sorted_order() -> None:
+    """Sorted-by-capacity pooled tables and ID-less tables are detected; noisy single-cell histories pass."""
+    from src.data.real_loaders import detect_pooled_sorted_order
+
+    sorted_q = np.linspace(4.5, 3.8, 200)
+    # Missing cell/cycle IDs -> always pooled_unordered
+    assert detect_pooled_sorted_order(sorted_q, has_cell_and_cycle_cols=False) == "pooled_unordered"
+    # Even if IDs exist, strictly non-increasing Q_max -> pooled_unordered
+    assert detect_pooled_sorted_order(sorted_q, has_cell_and_cycle_cols=True) == "pooled_unordered"
+
+    rng = np.random.default_rng(123)
+    noisy_cell_q = np.linspace(2.0, 1.5, 200) + rng.normal(0.0, 0.025, size=200)
+    assert detect_pooled_sorted_order(noisy_cell_q, has_cell_and_cycle_cols=True) == "ordered_single_cell"
+
+
+def test_no_synthetic_data_generators_in_repo() -> None:
+    """Repo-wide audit: zero synthetic dataset generators exist or are imported by source modules."""
     repo_root = Path(__file__).resolve().parents[2]
     assert not (repo_root / "urop_core" / "src" / "data" / "physics_simulator.py").exists()
 

@@ -4,8 +4,7 @@ Note (per Proposal Section 5.7): This module performs a physics-based closed-loo
 evaluating state-informed adaptive charging against CC-CV under defined voltage, current,
 and thermal safety constraints. It is a simulation study, not physical hardware validation.
 
-Anti-circularity design:
-- ZERO imports from `physics_simulator.py`.
+Plant-to-controller separation:
 - The charging plant uses an independent 2-RC electro-thermal model (fast charge-transfer RC +
   slow solid-state diffusion RC + charging hysteresis + +12% unmodeled resistance mismatch)
   that intentionally differs from the controller's 1-RC online feature extractor.
