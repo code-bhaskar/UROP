@@ -48,7 +48,7 @@ def plot_domain_alignment_pca(mining_results: dict, figures_dir: Path) -> Path:
         ax0.scatter(p["raw_li"][:, 0], p["raw_li"][:, 1], s=14, alpha=0.45, c=PALETTE["li_ion"], label="Li-ion")
         ax0.scatter(p["raw_na"][:, 0], p["raw_na"][:, 1], s=14, alpha=0.45, c=PALETTE["na_ion"], label="Na-ion")
         ax0.set_title(
-            f"{task} — Raw Features (Before Alignment)\nMMD²={s_raw['mmd2']:.4f}, W1={s_raw['mean_wasserstein_1']:.3f}"
+            f"{task}{' (Exploratory Pooled)' if task == 'SoH' else ''} — Raw Features\nMMD²={s_raw['mmd2']:.4f}, W1={s_raw['mean_wasserstein_1']:.3f}"
         )
         ax0.set_xlabel("PC 1")
         ax0.set_ylabel("PC 2")
@@ -57,7 +57,7 @@ def plot_domain_alignment_pca(mining_results: dict, figures_dir: Path) -> Path:
         ax1.scatter(p["aligned_li"][:, 0], p["aligned_li"][:, 1], s=14, alpha=0.45, c=PALETTE["li_ion"], label="Li-ion")
         ax1.scatter(p["aligned_na"][:, 0], p["aligned_na"][:, 1], s=14, alpha=0.45, c=PALETTE["na_ion"], label="Na-ion")
         ax1.set_title(
-            f"{task} — Physics + Empirical OCV/CORAL Aligned\nMMD²={s_aln['mmd2']:.4f}, W1={s_aln['mean_wasserstein_1']:.3f}"
+            f"{task}{' (Exploratory Pooled)' if task == 'SoH' else ''} — Physics + OCV/CORAL Aligned\nMMD²={s_aln['mmd2']:.4f}, W1={s_aln['mean_wasserstein_1']:.3f}"
         )
         ax1.set_xlabel("PC 1")
         ax1.set_ylabel("PC 2")
@@ -125,10 +125,10 @@ def plot_cross_chemistry_ablation(
 
     fig, axes = plt.subplots(2, 2, figsize=(13.0, 8.8), dpi=160)
     combos = [
-        ("SoC", "li_ion_to_na_ion", "SoC: Li-ion → Na-ion (Zero-Shot)"),
+        ("SoC", "li_ion_to_na_ion", "SoC: Li-ion → Na-ion (All 6 Na Cells, Zero-Shot)"),
         ("SoC", "na_ion_to_li_ion", "SoC: Na-ion → Li-ion (Zero-Shot)"),
-        ("SoH", "li_ion_to_na_ion", "SoH: Li-ion → Na-ion (Zero-Shot)"),
-        ("SoH", "na_ion_to_li_ion", "SoH: Na-ion → Li-ion (Zero-Shot)"),
+        ("SoH", "li_ion_to_na_ion", "SoH: Li-ion → Na-ion (Exploratory Pooled, Tabular Only)"),
+        ("SoH", "na_ion_to_li_ion", "SoH: Na-ion → Li-ion (Exploratory Pooled, Tabular Only)"),
     ]
 
     for ax, (task, direction, title) in zip(axes.ravel(), combos):
@@ -210,7 +210,11 @@ def plot_transfer_learning_curves(
                 label=method,
             )
 
-        ax.set_title(f"{task} Transfer Learning: Li-ion → Na-ion (Held-Out Na-ion Test Cells)")
+        ax.set_title(
+            f"{task} Transfer Learning: Li-ion → Na-ion (6-Fold LOCO)"
+            if task == "SoC"
+            else f"{task} Transfer Learning (Exploratory Cross-Workbook, Tabular Only)"
+        )
         ax.set_xlabel("Target Na-ion Labeled Training Budget (%)")
         ax.set_ylabel("Test RMSE (Lower is Better)")
         ax.legend(fontsize=8, frameon=True)
@@ -321,6 +325,41 @@ def plot_adaptive_charging_comparison(
     )
     fig.tight_layout()
     out = figures_dir / "fig6_adaptive_vs_cccv_charging.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def plot_na_soc_loco_per_cell(
+    loco_rows: list[dict],
+    figures_dir: Path,
+) -> Path | None:
+    """Fig 7: Per-cell Leave-One-Cell-Out (LOCO) RMSE across all 6 Wang et al. Na-ion cells."""
+    soc_loco = [r for r in loco_rows if r.get("task") == "SoC" and "test_cell" in r]
+    if not soc_loco:
+        return None
+    df = pd.DataFrame(soc_loco)
+    df["cell_label"] = df["test_cell"] + "\n(" + df["protocol_family"] + ")"
+
+    fig, ax = plt.subplots(figsize=(12.2, 4.8), dpi=160)
+    sns.barplot(
+        data=df,
+        x="cell_label",
+        y="rmse",
+        hue="model",
+        palette="viridis",
+        ax=ax,
+    )
+    ax.set_title("Objective 3 (Problem 2): Na-ion SoC 6-Fold Leave-One-Cell-Out Per-Cell Test RMSE")
+    ax.set_xlabel("Held-Out Na-ion Cell (Protocol Family)")
+    ax.set_ylabel("Test RMSE (Lower is Better)")
+    ax.legend(title="Model", fontsize=8, title_fontsize=8, ncol=5, loc="upper right")
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.18)
+    for container in ax.containers:
+        ax.bar_label(container, fmt="%.3f", fontsize=6.5, padding=2, rotation=90)
+
+    fig.tight_layout()
+    out = figures_dir / "fig7_na_soc_loco_per_cell.png"
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     return out

@@ -1,10 +1,9 @@
 """Cross-Chemistry Domain Alignment (Li-ion <-> Na-ion) — Zero-Circularity, Data-Driven OCV & CORAL.
 
-IMPORTANT SCIENTIFIC GUARANTEE:
-This module has ZERO imports from `physics_simulator.py`. All OCV reference curves are
-estimated strictly empirically from training cells only (using pulse-rest low-current points
-where available, or IR-compensated voltages binned into 10% SoC intervals + isotonic monotonic
-regression), never from any analytic simulator formula.
+DATA-DRIVEN EMPIRICAL OCV GUARANTEE:
+All OCV reference curves are estimated directly from training cells only (using pulse-rest
+low-current points where available, or IR-compensated voltages binned into 10% SoC intervals
++ isotonic monotonic regression), never from any hardcoded analytic voltage curve.
 
 Implements three complementary physics + statistical domain adaptation layers:
 1. Physics-Normalized Chemistry-Invariant Representation (computed in Gold layer).

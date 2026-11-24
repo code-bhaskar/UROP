@@ -146,4 +146,15 @@ export interface OverviewSummary {
     top_mi_soh_li: { feature: string; mutual_information: number }[];
     top_mi_soh_na: { feature: string; mutual_information: number }[];
   };
+  unit_counts?: {
+    SoC?: { li_ion?: number; na_ion?: number };
+    SoH?: { li_ion?: number; na_ion?: number };
+  };
+  evaluation_modes?: {
+    SoC_cross_chemistry?: string;
+    SoH_cross_chemistry?: string;
+    na_soc_within?: string;
+    na_soh_within?: string;
+  };
+  compatibility_notes?: string[];
 }

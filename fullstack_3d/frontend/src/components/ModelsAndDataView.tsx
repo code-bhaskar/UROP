@@ -19,12 +19,13 @@ interface ModelsAndDataViewProps {
 }
 
 const FIGURE_CAPTIONS: Record<string, string> = {
-  "fig1_domain_alignment_pca.png": "Fig 1 · PCA Manifold Alignment (Raw vs Physics + OCV-to-OCV + CORAL)",
-  "fig2_within_chemistry_benchmarks.png": "Fig 2 · Within-Chemistry Baselines across all 5 Model Families",
+  "fig1_domain_alignment_pca.png": "Fig 1 · PCA Manifold Alignment (Raw vs Physics + OCV-to-OCV + CORAL; SoH Exploratory Pooled)",
+  "fig2_within_chemistry_benchmarks.png": "Fig 2 · Within-Chemistry Baselines (6-Fold LOCO Na-ion SoC; Exploratory LOWO Na-ion SoH)",
   "fig3_cross_chemistry_ablation.png": "Fig 3 · 3-Tier Unsupervised Cross-Chemistry Generalization Ablation",
-  "fig4_transfer_learning_curves.png": "Fig 4 · Few-Shot Transfer Learning Curves (Li-ion → Na-ion)",
+  "fig4_transfer_learning_curves.png": "Fig 4 · Few-Shot Transfer Learning Curves (Li-ion → Na-ion; SoH Cross-Workbook Exploratory)",
   "fig5_cross_chemistry_parity.png": "Fig 5 · Cross-Chemistry Parity Recovery (Raw vs Aligned Zero-Shot)",
-  "fig6_adaptive_vs_cccv_charging.png": "Fig 6 · Simulated Adaptive ML Charging vs CC-CV Trajectories",
+  "fig6_adaptive_vs_cccv_charging.png": "Fig 6 · Proposal §5.7 Simulation Study: Adaptive ML Charging vs CC-CV",
+  "fig7_na_soc_loco_per_cell.png": "Fig 7 · Na-ion SoC 6-Fold Leave-One-Cell-Out Per-Cell RMSE Breakdown",
 };
 
 export const ModelsAndDataView: React.FC<ModelsAndDataViewProps> = ({ summary, withinRows, figures }) => {
@@ -45,23 +46,31 @@ export const ModelsAndDataView: React.FC<ModelsAndDataViewProps> = ({ summary, w
 
   const audit = summary.quality_audit;
   const inv = summary.dataset_inventory;
+  const liSocN = summary.unit_counts?.SoC?.li_ion ?? 0;
+  const naSocN = summary.unit_counts?.SoC?.na_ion ?? 0;
+  const liSohN = summary.unit_counts?.SoH?.li_ion ?? 0;
+  const naSohN = summary.unit_counts?.SoH?.na_ion ?? 0;
+  const isSohExploratory =
+    summary.evaluation_modes?.SoH_cross_chemistry === "exploratory_pooled" || naSohN < 3;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Objective 1: Big Data Lakehouse & Quality Audit KPIs */}
+      {/* Objective 1: Columnar Out-of-Core Lakehouse & Quality Audit KPIs */}
       <div className="panel">
         <div className="panel-header">
           <div>
             <h2 className="panel-title">
               <Database size={18} className="text-cyan" />
-              Objective 1 · Big Data Medallion Lakehouse &amp; Data Mining Quality Audit
+              Objective 1 · Columnar Out-of-Core Medallion Lakehouse &amp; Quality Audit
             </h2>
             <p className="panel-subtitle">
               Polars lazy streaming + ZSTD Apache Parquet (Bronze → Silver → Gold) + DuckDB SQL analytics +
-              IsolationForest anomaly removal.
+              IsolationForest anomaly filtering.
             </p>
           </div>
-          <span className="tag tag-li">LFS Inventory: {inv.total_files} files ({inv.total_declared_mb} MB)</span>
+          <span className="tag tag-li">
+            Lab Corpus: {inv.pulled_files}/{inv.total_files} files ({inv.total_declared_mb} MB)
+          </span>
         </div>
 
         <div className="grid-4">
@@ -69,7 +78,7 @@ export const ModelsAndDataView: React.FC<ModelsAndDataViewProps> = ({ summary, w
             <div className="kpi-label">Silver Time-Series Rows</div>
             <div className="kpi-value mono text-cyan">{audit.timeseries.silver_rows.toLocaleString()}</div>
             <div className="kpi-sub">
-              Retention {audit.timeseries.retention_rate_pct}% (from {audit.timeseries.bronze_rows.toLocaleString()} Bronze)
+              Retention {audit.timeseries.retention_rate_pct}% ({liSocN} NASA Li-ion + {naSocN} Wang Na-ion cells)
             </div>
           </div>
           <div className="kpi-card">
@@ -85,13 +94,10 @@ export const ModelsAndDataView: React.FC<ModelsAndDataViewProps> = ({ summary, w
             </div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-label">Silver Aging Cycles</div>
+            <div className="kpi-label">Silver Degradation Records</div>
             <div className="kpi-value mono text-green">{audit.cycles.silver_rows.toLocaleString()}</div>
             <div className="kpi-sub">
-              {summary.duckdb_analytics.chemistry_summary
-                .map((c) => `${c.n_cells} ${c.chemistry === "li_ion" ? "NASA Li-ion" : "Wang Na-ion"}`)
-                .join(" + ")}{" "}
-              real cells (strict cell-level splits)
+              {liSohN} ordered NASA cells + {naSohN} pooled NFM workbooks (+1 external pooled NCM workbook)
             </div>
           </div>
           <div className="kpi-card">
@@ -111,14 +117,18 @@ export const ModelsAndDataView: React.FC<ModelsAndDataViewProps> = ({ summary, w
                 <Cpu size={16} className="text-green" />
                 Objectives 2 &amp; 3 · Within-Chemistry Model RMSE ({taskFilter})
               </h3>
-              <p className="panel-subtitle">Held-out test cells across all 5 model families specified in the PDF.</p>
+              <p className="panel-subtitle">
+                {taskFilter === "SoC"
+                  ? `NASA ${liSocN}-cell split (Li-ion) & 6-fold Leave-One-Cell-Out across all ${naSocN} Wang cells (Na-ion).`
+                  : `NASA ${liSohN} ordered cells (Li-ion) & exploratory 2-fold LOWO across ${naSohN} pooled Mendeley NFM workbooks (Na-ion, tabular only, temp-confounded).`}
+              </p>
             </div>
             <div className="btn-group">
               <button className={`btn ${taskFilter === "SoC" ? "active" : ""}`} onClick={() => setTaskFilter("SoC")}>
                 SoC
               </button>
               <button className={`btn ${taskFilter === "SoH" ? "active" : ""}`} onClick={() => setTaskFilter("SoH")}>
-                SoH
+                SoH{isSohExploratory ? " (Exploratory)" : ""}
               </button>
             </div>
           </div>

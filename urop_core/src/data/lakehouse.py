@@ -126,34 +126,19 @@ def run_duckdb_bigdata_analytics(
         aging_summary = pl.from_arrow(
             con.sql(
                 f"""
-            WITH ranked AS (
-                SELECT
-                    chemistry,
-                    cell_id,
-                    cycle_number,
-                    soh,
-                    r_int_est_ohm,
-                    temp_rise_c,
-                    FIRST_VALUE(soh) OVER (PARTITION BY cell_id ORDER BY cycle_number) AS initial_soh,
-                    LAST_VALUE(soh) OVER (
-                        PARTITION BY cell_id ORDER BY cycle_number
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                    ) AS final_soh,
-                    MAX(cycle_number) OVER (PARTITION BY cell_id) AS max_cycle
-                FROM read_parquet('{cyc_p}')
-            )
             SELECT
                 chemistry,
-                COUNT(DISTINCT cell_id) AS n_aged_cells,
-                MAX(max_cycle) AS max_cycles,
-                ROUND(AVG(initial_soh), 4) AS avg_initial_soh,
-                ROUND(AVG(final_soh), 4) AS avg_final_soh,
-                ROUND(AVG((initial_soh - final_soh) / NULLIF(max_cycle, 0) * 100.0), 4) AS avg_fade_pct_per_cycle,
+                data_provenance,
+                COUNT(DISTINCT cell_id) AS n_units,
+                COUNT(*) AS n_records,
+                ROUND(MIN(soh), 4) AS min_soh,
+                ROUND(AVG(soh), 4) AS mean_soh,
+                ROUND(MAX(soh), 4) AS max_soh,
                 ROUND(AVG(r_int_est_ohm), 4) AS avg_r_int_ohm,
                 ROUND(AVG(temp_rise_c), 2) AS avg_temp_rise_c
-            FROM ranked
-            GROUP BY chemistry
-            ORDER BY chemistry
+            FROM read_parquet('{cyc_p}')
+            GROUP BY chemistry, data_provenance
+            ORDER BY chemistry, data_provenance
             """
             ).to_arrow_table()
         )

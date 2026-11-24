@@ -253,20 +253,31 @@ def load_real_nasa_li_ion(
                     energy_wh = float(np.trapezoid(np.abs(v * i_signed), t) / 3600.0)
                     t_dur = float(max(t[-1] - t[0], 1.0))
 
+                    # Consistent Discharge-only partial-voltage-window transit durations (matching Mendeley definitions)
+                    v_span = spec.v_max - spec.v_min
+                    m_mid = (v >= spec.v_min + 0.25 * v_span) & (v <= spec.v_min + 0.75 * v_span)
+                    m_upper = (v >= spec.v_min + 0.45 * v_span) & (v <= spec.v_min + 0.90 * v_span)
+                    m_tail = v >= spec.v_min + 0.75 * v_span
+                    dis_dur_partial = float(np.sum(dt[m_mid])) if int(np.sum(m_mid)) >= 2 else t_dur * 0.55
+                    upper_dur_partial = float(np.sum(dt[m_upper])) if int(np.sum(m_upper)) >= 2 else t_dur * 0.45
+                    tail_dur_partial = float(np.sum(dt[m_tail])) if int(np.sum(m_tail)) >= 2 else t_dur * 0.20
+
                     cycle_rows.append(
                         {
                             "chemistry": "li_ion",
                             "cell_id": cell_id,
-                            "cycle_number": discharge_idx,
+                            "cycle_number": int(discharge_idx),
+                            "sample_idx": int(discharge_idx),
+                            "data_provenance": "ordered_per_cell",
                             "q_nom": spec.default_q_nom,
                             "ambient_temp_c": amb_temp,
                             "discharge_capacity_ah": cap,
                             "ref_capacity_ah": ref_capacity,
                             "soh": soh,
-                            "discharge_duration_s": t_dur,
+                            "discharge_duration_s": max(dis_dur_partial, 1.0),
                             "charge_duration_s": prev_charge_dur if np.isfinite(prev_charge_dur) else t_dur * 1.4,
-                            "cc_duration_s": prev_cc_dur if np.isfinite(prev_cc_dur) else t_dur * 0.9,
-                            "cv_duration_s": prev_cv_dur if np.isfinite(prev_cv_dur) else t_dur * 0.5,
+                            "cc_duration_s": max(upper_dur_partial, 1.0),
+                            "cv_duration_s": max(tail_dur_partial, 1.0),
                             "mean_voltage_v": float(np.mean(v)),
                             "min_voltage_v": float(np.min(v)),
                             "max_voltage_v": float(np.max(v)),
@@ -525,6 +536,8 @@ def load_real_na_ion_csvs(
                         "chemistry": "na_ion",
                         "cell_id": cell_id,
                         "cycle_number": int(cyc_num),
+                        "sample_idx": int(cyc_num),
+                        "data_provenance": "ordered_per_cell",
                         "q_nom": q_nom,
                         "ambient_temp_c": amb_temp,
                         "discharge_capacity_ah": cap_c,
@@ -555,6 +568,29 @@ def load_real_na_ion_csvs(
     return ts_df, cycle_df
 
 
+def detect_pooled_sorted_order(
+    q_max: np.ndarray,
+    soh_explicit: np.ndarray | None = None,
+    has_cell_and_cycle_cols: bool = False,
+) -> str:
+    """Detect whether a sheet's rows are pooled/sorted rather than a true noisy per-cell cycle history.
+
+    Real single-cell cycling exhibits small measurement noise and capacity recovery rises across
+    consecutive cycles. Strictly non-increasing Q_max or SOH (or absence of cell/cycle IDs)
+    identifies the workbook as ``pooled_unordered``.
+    """
+    if not has_cell_and_cycle_cols:
+        return "pooled_unordered"
+    arr = soh_explicit if (soh_explicit is not None and np.all(np.isfinite(soh_explicit))) else q_max
+    if len(arr) < 5:
+        return "pooled_unordered"
+    diffs = np.diff(arr)
+    inc_frac = float(np.mean(diffs > 1e-9))
+    if inc_frac < 0.01:
+        return "pooled_unordered"
+    return "ordered_single_cell"
+
+
 def _parse_xlsx_qv_sheet(ws) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Read a Mendeley Q(V) Excel sheet: row 0 = voltage grid (+ optional 'SOH'), rows 1..N = cumulative capacity (Ah)."""
     rows = list(ws.iter_rows(values_only=True))
@@ -580,184 +616,162 @@ def load_real_mendeley_degradation_xlsx(
     cfg: PipelineConfig,
     xlsx_paths: list[Path],
 ) -> pl.DataFrame:
-    """Load real Shen Siyuan et al. (2026, DOI:10.17632/4mztcdc4gt.1) NFM Na-ion & NCM Li-ion degradation Excel sheets.
+    """Load Shen Siyuan et al. (2026, DOI:10.17632/4mztcdc4gt.1) NFM Na-ion & NCM Li-ion degradation Excel sheets.
 
-    Dataset metadata (Mendeley Data v1):
-      - Dataset 1-1.xlsx: NFM Na-ion, Q_nom = 4.5 Ah, T = 25 °C, V = [2.0, 4.0] V, 1C CC cycling (Discharge + Charge)
-      - Dataset 1-2.xlsx: NFM Na-ion, Q_nom = 4.5 Ah, T = -15 °C, V = [2.0, 4.0] V, 1C CC cycling (Discharge + Charge + SOH)
-      - Dataset 2.xlsx:   NCM Li-ion, Q_nom = 1.5 Ah, T = 25 °C, V = [2.5, 4.2] V, 1C CC cycling (Discharge)
+    Dataset metadata & structural findings (documented in urop_core/DATA_NOTES.md):
+      - Dataset 1-1.xlsx -> unit ``na_nfm_25C``  (NFM Na-ion, 4.5 Ah, 25 °C, 2.0-4.0 V, 1C, no SOH col -> Q_max / max(Q_max))
+      - Dataset 1-2.xlsx -> unit ``na_nfm_m15C`` (NFM Na-ion, 4.5 Ah, -15 °C, 2.0-4.0 V, 1C, explicit SOH col kept)
+      - Dataset 2.xlsx   -> unit ``li_ncm_25C``  (NCM Li-ion, 1.5 Ah, 25 °C, 2.5-4.2 V, 1C, no SOH col -> Q_max / max(Q_max))
 
-    All cycle-level health indicators are extracted strictly from indirect partial-voltage-window
-    durations, incremental capacity (dQ/dV) peaks, voltage-curve shape, and charge-discharge
-    hysteresis resistance (ZERO full-capacity target leakage).
+    Scientific safeguards (Case A — ``pooled_unordered``):
+      - Emits strictly ONE unit ID per workbook (zero invented KMeans pseudo-cells).
+      - Leaves ``cycle_number = None`` (null); row order is never used as a feature or sequence index.
+      - Uses ONLY the Discharge sheet because Discharge vs Charge first-difference correlations
+        are near zero (+0.029 / -0.035) and Dataset 1-2 carries differing SOH columns on the two sheets.
+      - Caches parsed Discharge arrays in ``data_lake/cache/*.npz`` for faster repeated runs.
     """
     import openpyxl
-    from sklearn.cluster import KMeans
+
+    cache_dir = cfg.lake_dir / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     cycle_rows: list[dict] = []
 
     for xlsx_path in xlsx_paths:
-        wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
-        try:
-            sheet_names = wb.sheetnames
-            dis_name = next((s for s in sheet_names if "discharge" in s.lower()), sheet_names[0])
-            chg_name = next((s for s in sheet_names if "charge" in s.lower() and "discharge" not in s.lower()), None)
+        cache_file = cache_dir / f"mendeley_{xlsx_path.stem.replace(' ', '_')}.npz"
+        mtime = xlsx_path.stat().st_mtime
+        dis_name = ""
 
-            header_hint = f"{xlsx_path.stem} {dis_name}".lower()
-            if "nfm" in header_hint or "1-1" in header_hint or "1-2" in header_hint:
-                chem = "na_ion"
-                q_nom = 4.5
-                v_min, v_max = 2.0, 4.0
-                amb_temp = -15.0 if ("-15" in header_hint or "1-2" in header_hint) else 25.0
-                prefix = "nfm_m15C" if amb_temp < 0 else "nfm_25C"
-            else:
-                chem = "li_ion"
-                q_nom = 1.5
-                v_min, v_max = 2.5, 4.2
-                amb_temp = 25.0
-                prefix = "ncm_25C"
+        if cache_file.exists() and cache_file.stat().st_mtime >= mtime:
+            cached = np.load(cache_file, allow_pickle=False)
+            V_d = cached["V_d"]
+            Q_d = cached["Q_d"]
+            soh_explicit = cached["soh_explicit"] if "soh_explicit" in cached.files else None
+            dis_name = str(cached["dis_name"].item())
+        else:
+            wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+            try:
+                sheet_names = wb.sheetnames
+                dis_name = next((s for s in sheet_names if "discharge" in s.lower()), sheet_names[0])
+                V_d, Q_d, soh_explicit = _parse_xlsx_qv_sheet(wb[dis_name])
+            finally:
+                wb.close()
+            save_kwargs = {"V_d": V_d, "Q_d": Q_d, "dis_name": np.array(dis_name)}
+            if soh_explicit is not None:
+                save_kwargs["soh_explicit"] = soh_explicit
+            np.savez_compressed(cache_file, **save_kwargs)
 
-            V_d, Q_d, soh_explicit = _parse_xlsx_qv_sheet(wb[dis_name])
-            if Q_d.shape[0] < 10 or V_d.size < 20:
-                continue
+        if Q_d.shape[0] < 10 or V_d.size < 20:
+            continue
 
-            V_c, Q_c = np.array([]), np.empty((0, 0))
-            if chg_name is not None:
-                V_c, Q_c, _ = _parse_xlsx_qv_sheet(wb[chg_name])
-                if Q_c.shape[0] != Q_d.shape[0]:
-                    Q_c = np.empty((0, 0))
-        finally:
-            wb.close()
+        header_hint = f"{xlsx_path.stem} {dis_name}".lower()
+        if "nfm" in header_hint or "1-1" in header_hint or "1-2" in header_hint:
+            chem = "na_ion"
+            q_nom = 4.5
+            v_min, v_max = 2.0, 4.0
+            amb_temp = -15.0 if ("-15" in header_hint or "1-2" in header_hint) else 25.0
+            unit_id = "na_nfm_m15C" if amb_temp < 0 else "na_nfm_25C"
+        else:
+            chem = "li_ion"
+            q_nom = 1.5
+            v_min, v_max = 2.5, 4.2
+            amb_temp = 25.0
+            unit_id = "li_ncm_25C"
 
         n_rows = Q_d.shape[0]
         span = max(v_max - v_min, 1e-6)
-        i_1c = q_nom  # 1 C constant current in Amperes
+        i_1c = q_nom
 
         Q_max = np.max(Q_d, axis=1)
-        valid_mask = np.isfinite(Q_max) & (Q_max > 0.25 * q_nom)
-        if int(np.sum(valid_mask)) < 10:
+        valid_idx = np.where(np.isfinite(Q_max) & (Q_max > 0.25 * q_nom))[0]
+        if len(valid_idx) < 10:
             continue
 
-        # Compute voltage quantiles per curve to separate multi-cell tracks orthogonal to capacity fade
-        v20 = np.empty(n_rows, dtype=np.float64)
-        v50 = np.empty(n_rows, dtype=np.float64)
-        v80 = np.empty(n_rows, dtype=np.float64)
-        for k in range(n_rows):
-            qn = Q_d[k] / max(Q_max[k], 1e-6)
-            v20[k] = float(np.interp(0.20, qn, V_d))
-            v50[k] = float(np.interp(0.50, qn, V_d))
-            v80[k] = float(np.interp(0.80, qn, V_d))
+        provenance = detect_pooled_sorted_order(
+            Q_max[valid_idx],
+            soh_explicit[valid_idx] if soh_explicit is not None else None,
+            has_cell_and_cycle_cols=False,
+        )
 
-        # Remove smooth quadratic trend vs Q_max to isolate intrinsic cell-to-cell impedance tracks
-        valid_idx = np.where(valid_mask)[0]
-        n_tracks = 3 if len(valid_idx) >= 90 else 1
-        if n_tracks > 1:
-            res_feats = []
-            for arr in (v20[valid_idx], v50[valid_idx], v80[valid_idx]):
-                poly = np.poly1d(np.polyfit(Q_max[valid_idx], arr, deg=2))
-                res = arr - poly(Q_max[valid_idx])
-                res_feats.append((res - np.mean(res)) / max(float(np.std(res)), 1e-6))
-            X_track = np.column_stack(res_feats)
-            track_labels = KMeans(n_clusters=n_tracks, random_state=cfg.seed, n_init=10).fit_predict(X_track)
-        else:
-            track_labels = np.zeros(len(valid_idx), dtype=int)
+        # Reference capacity: explicit SOH column when present, else workbook maximum Q_max
+        ref_cap = float(np.max(Q_max[valid_idx]))
+        if ref_cap <= 0.1:
+            continue
 
-        # Fixed partial voltage window indices (strictly non-leaky partial windows!)
+        # Fixed partial voltage window indices (strictly Discharge-only indirect health indicators)
         i_25 = int(np.argmin(np.abs(V_d - (v_min + 0.25 * span))))
         i_45 = int(np.argmin(np.abs(V_d - (v_min + 0.45 * span))))
         i_75 = int(np.argmin(np.abs(V_d - (v_min + 0.75 * span))))
         i_90 = int(np.argmin(np.abs(V_d - (v_min + 0.90 * span))))
+        dV_mid = 0.5 * (V_d[:-1] + V_d[1:])
 
-        has_chg = Q_c.shape[0] == n_rows and V_c.size >= 20
-        if has_chg:
-            ic_20 = int(np.argmin(np.abs(V_c - (v_min + 0.20 * span))))
-            ic_80 = int(np.argmin(np.abs(V_c - (v_min + 0.80 * span))))
-            Q_c_max = np.max(Q_c, axis=1)
+        for sample_pos, row_idx in enumerate(valid_idx, start=1):
+            q_curve = Q_d[row_idx]
+            cap_c = float(Q_max[row_idx])
+            if soh_explicit is not None and np.isfinite(soh_explicit[row_idx]):
+                soh_c = float(np.clip(soh_explicit[row_idx], 0.45, 1.05))
+                implied_ref = cap_c / max(soh_c, 1e-6)
+            else:
+                soh_c = float(np.clip(cap_c / ref_cap, 0.45, 1.05))
+                implied_ref = ref_cap
 
-        track_order = np.argsort([float(np.mean(v50[valid_idx[track_labels == t]])) for t in range(n_tracks)])
+            dq_step = np.clip(np.diff(q_curve), 0.0, None)
+            energy_wh = float(np.sum(dq_step * dV_mid))
+            mean_v = energy_wh / max(cap_c, 1e-6)
+            v_norm_int = float(np.clip((mean_v - v_min) / span, 0.0, 1.0))
 
-        for new_cid, orig_t in enumerate(track_order, start=1):
-            members = valid_idx[track_labels == orig_t]
-            if len(members) < 10:
-                continue
-            members = members[np.argsort(-Q_max[members])]
-            step = max(1, len(members) // 320)
-            members = members[::step]
+            dqdv = np.gradient(q_curve, V_d)
+            dqdv_s = np.convolve(dqdv, np.ones(7) / 7.0, mode="same")
+            pk_idx = int(np.argmax(dqdv_s))
+            ica_peak = float(np.clip(dqdv_s[pk_idx] / q_nom, 0.05, 12.0))
+            ica_v_peak = float(np.clip((V_d[pk_idx] - v_min) / span, 0.0, 1.0))
 
-            cell_id = f"{prefix}_cell{new_cid}"
-            ref_cap = float(np.median(Q_max[members[: min(5, len(members))]]))
-            if ref_cap <= 0.1:
-                continue
+            # Strictly Discharge-only partial-window transit durations (matching NASA definitions)
+            q_mid_win = max(float(q_curve[i_75] - q_curve[i_25]), 1e-4)
+            dis_dur_partial = 3600.0 * q_mid_win / i_1c
+            q_upper_win = max(float(q_curve[i_90] - q_curve[i_45]), 1e-4)
+            upper_dur_partial = 3600.0 * q_upper_win / i_1c
+            q_tail_win = max(float(q_curve[-1] - q_curve[i_75]), 1e-4)
+            tail_dur_partial = 3600.0 * q_tail_win / i_1c
 
-            dV_mid = 0.5 * (V_d[:-1] + V_d[1:])
+            # Discharge-only polarization proxy (no cross-sheet Charge-Discharge hysteresis!)
+            qn = q_curve / max(cap_c, 1e-6)
+            v50 = float(np.interp(0.50, qn, V_d))
+            r_est = float(np.clip((v50 - v_min) / (15.0 * i_1c), 0.005, 0.5))
+            temp_rise = float(np.clip(i_1c * i_1c * r_est * (8.0 if q_nom > 3.0 else 35.0), 0.5, 25.0))
 
-            for cyc_num, row_idx in enumerate(members, start=1):
-                q_curve = Q_d[row_idx]
-                cap_c = float(Q_max[row_idx])
-                if soh_explicit is not None and np.isfinite(soh_explicit[row_idx]):
-                    soh_c = float(np.clip(soh_explicit[row_idx], 0.45, 1.05))
-                else:
-                    soh_c = float(np.clip(cap_c / ref_cap, 0.45, 1.05))
+            cycle_rows.append(
+                {
+                    "chemistry": chem,
+                    "cell_id": unit_id,
+                    "cycle_number": None,
+                    "sample_idx": int(sample_pos),
+                    "data_provenance": provenance,
+                    "q_nom": q_nom,
+                    "ambient_temp_c": amb_temp,
+                    "discharge_capacity_ah": cap_c,
+                    "ref_capacity_ah": implied_ref,
+                    "soh": soh_c,
+                    "discharge_duration_s": max(dis_dur_partial, 1.0),
+                    "charge_duration_s": max(dis_dur_partial + tail_dur_partial, 1.0),
+                    "cc_duration_s": max(upper_dur_partial, 1.0),
+                    "cv_duration_s": max(tail_dur_partial, 1.0),
+                    "mean_voltage_v": mean_v,
+                    "min_voltage_v": v_min,
+                    "max_voltage_v": v_max,
+                    "mean_current_a": i_1c,
+                    "mean_temp_c": amb_temp + 0.4 * temp_rise,
+                    "max_temp_c": amb_temp + temp_rise,
+                    "temp_rise_c": temp_rise,
+                    "r_int_est_ohm": r_est,
+                    "energy_wh": energy_wh,
+                    "ica_peak": ica_peak,
+                    "ica_v_norm_peak": ica_v_peak,
+                    "v_norm_integral": v_norm_int,
+                    "data_source": "real_dataset",
+                }
+            )
 
-                dq_step = np.clip(np.diff(q_curve), 0.0, None)
-                energy_wh = float(np.sum(dq_step * dV_mid))
-                mean_v = energy_wh / max(cap_c, 1e-6)
-                v_norm_int = float(np.clip((mean_v - v_min) / span, 0.0, 1.0))
-
-                dqdv = np.gradient(q_curve, V_d)
-                dqdv_s = np.convolve(dqdv, np.ones(7) / 7.0, mode="same")
-                pk_idx = int(np.argmax(dqdv_s))
-                ica_peak = float(np.clip(dqdv_s[pk_idx] / q_nom, 0.05, 12.0))
-                ica_v_peak = float(np.clip((V_d[pk_idx] - v_min) / span, 0.0, 1.0))
-
-                q_mid_win = max(float(q_curve[i_75] - q_curve[i_25]), 1e-4)
-                dis_dur_partial = 3600.0 * q_mid_win / i_1c
-                q_tail_win = max(float(q_curve[-1] - q_curve[i_75]), 1e-4)
-                cv_dur_tail = 3600.0 * q_tail_win / i_1c
-
-                if has_chg and Q_c_max[row_idx] > 0.2 * q_nom:
-                    qc_curve = Q_c[row_idx]
-                    q_chg_mid = max(float(qc_curve[ic_80] - qc_curve[ic_20]), 1e-4)
-                    cc_dur_partial = 3600.0 * q_chg_mid / i_1c
-                    chg_dur_est = 3600.0 * float(Q_c_max[row_idx]) / i_1c
-                    v50_c = float(np.interp(0.50, qc_curve / max(float(Q_c_max[row_idx]), 1e-6), V_c))
-                    r_est = float(np.clip(abs(v50_c - v50[row_idx]) / (2.0 * i_1c), 0.005, 0.5))
-                else:
-                    q_upper_win = max(float(q_curve[i_90] - q_curve[i_45]), 1e-4)
-                    cc_dur_partial = 3600.0 * q_upper_win / i_1c
-                    chg_dur_est = dis_dur_partial + cv_dur_tail
-                    r_est = float(np.clip((v50[row_idx] - v_min) / (15.0 * i_1c), 0.005, 0.5))
-
-                temp_rise = float(np.clip(i_1c * i_1c * r_est * (8.0 if q_nom > 3.0 else 35.0), 0.5, 25.0))
-
-                cycle_rows.append(
-                    {
-                        "chemistry": chem,
-                        "cell_id": cell_id,
-                        "cycle_number": int(cyc_num),
-                        "q_nom": q_nom,
-                        "ambient_temp_c": amb_temp,
-                        "discharge_capacity_ah": cap_c,
-                        "ref_capacity_ah": ref_cap,
-                        "soh": soh_c,
-                        "discharge_duration_s": max(dis_dur_partial, 1.0),
-                        "charge_duration_s": max(chg_dur_est, 1.0),
-                        "cc_duration_s": max(cc_dur_partial, 1.0),
-                        "cv_duration_s": max(cv_dur_tail, 1.0),
-                        "mean_voltage_v": mean_v,
-                        "min_voltage_v": v_min,
-                        "max_voltage_v": v_max,
-                        "mean_current_a": i_1c,
-                        "mean_temp_c": amb_temp + 0.4 * temp_rise,
-                        "max_temp_c": amb_temp + temp_rise,
-                        "temp_rise_c": temp_rise,
-                        "r_int_est_ohm": r_est,
-                        "energy_wh": energy_wh,
-                        "ica_peak": ica_peak,
-                        "ica_v_norm_peak": ica_v_peak,
-                        "v_norm_integral": v_norm_int,
-                        "data_source": "real_dataset",
-                    }
-                )
-
-    return pl.DataFrame(cycle_rows) if cycle_rows else pl.DataFrame()
+    if not cycle_rows:
+        return pl.DataFrame()
+    return pl.DataFrame(cycle_rows, schema_overrides={"cycle_number": pl.Int64})

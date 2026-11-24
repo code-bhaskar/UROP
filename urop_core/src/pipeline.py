@@ -28,6 +28,7 @@ from src.reporting.plots import (
     plot_cross_chemistry_ablation,
     plot_cross_chemistry_parity,
     plot_domain_alignment_pca,
+    plot_na_soc_loco_per_cell,
     plot_transfer_learning_curves,
     plot_within_chemistry_benchmarks,
 )
@@ -39,26 +40,27 @@ def run_full_pipeline(cfg: PipelineConfig) -> dict:
     t_start = time.perf_counter()
     cfg.ensure_dirs()
 
-    print("[1/7] Columnar Lakehouse: Ingesting REAL NASA Li-ion & Wang et al. Na-ion datasets to Bronze Parquet...")
+    print("[1/7] Columnar Lakehouse: Ingesting REAL NASA Li-ion, Wang Na-ion & Mendeley datasets to Bronze Parquet...", flush=True)
     inv, data_mode, bronze_ts, bronze_cyc = ingest_to_bronze(cfg)
-    print(f"      Mode={data_mode} | Dataset inventory: {inv.pulled_files}/{inv.total_files} real files ({inv.to_dict()['total_declared_mb']} MB)")
+    print(f"      Mode={data_mode} | Dataset inventory: {inv.pulled_files}/{inv.total_files} real files ({inv.to_dict()['total_declared_mb']} MB)", flush=True)
 
-    print("[2/7] Data Mining Quality Audit: Bronze -> Silver cleaning (nulls, duplicates, bounds, IsolationForest)...")
+    print("[2/7] Data Mining Quality Audit: Bronze -> Silver cleaning (nulls, duplicates, bounds, IsolationForest)...", flush=True)
     silver_ts, silver_cyc, audit_report = audit_and_clean_bronze_to_silver(cfg, bronze_ts, bronze_cyc)
     duckdb_analytics = run_duckdb_bigdata_analytics(silver_ts, silver_cyc, cfg.tables_dir)
     print(
         f"      Silver TS={audit_report['timeseries']['silver_rows']:,} rows "
-        f"(retention {audit_report['timeseries']['retention_rate_pct']}%) | Silver Cycles={audit_report['cycles']['silver_rows']:,}"
+        f"(retention {audit_report['timeseries']['retention_rate_pct']}%) | Silver Cycles={audit_report['cycles']['silver_rows']:,}",
+        flush=True,
     )
 
-    print("[3/7] Physics Feature Engineering & Unsupervised Domain Mining (Silver -> Gold Parquet)...")
+    print("[3/7] Physics Feature Engineering & Unsupervised Domain Mining (Silver -> Gold Parquet)...", flush=True)
     gold_soc_path, gold_soh_path = build_gold_features(cfg, silver_ts, silver_cyc)
     soc_df = pl.read_parquet(gold_soc_path)
     soh_df = pl.read_parquet(gold_soh_path)
     mining_results = run_data_mining_suite(cfg, soc_df, soh_df, cfg.tables_dir)
-    print(f"      K-Means operating-regime Silhouette={mining_results['kmeans_silhouette']:.4f}")
+    print(f"      K-Means operating-regime Silhouette={mining_results['kmeans_silhouette']:.4f}", flush=True)
 
-    print("[4/7] Within-Chemistry, 3-Tier Cross-Chemistry & Repeated Cell-Level CV (SoC & SoH)...")
+    print("[4/7] Within-Chemistry, 3-Tier Cross-Chemistry & Repeated Cell-Level CV (SoC & SoH)...", flush=True)
     soc_bundle = run_task_within_and_cross_chemistry(cfg, soc_df, task_name="SoC")
     soh_bundle = run_task_within_and_cross_chemistry(cfg, soh_df, task_name="SoH")
 
@@ -67,6 +69,23 @@ def run_full_pipeline(cfg: PipelineConfig) -> dict:
     within_df.to_csv(cfg.tables_dir / "within_chemistry_results.csv", index=False)
     cross_df.to_csv(cfg.tables_dir / "cross_chemistry_ablation_results.csv", index=False)
 
+    # Export Problem 1 & Problem 2 granular audit tables
+    na_soc_loco_df = pd.DataFrame(soc_bundle.loco_per_cell_rows)
+    if not na_soc_loco_df.empty:
+        na_soc_loco_df.to_csv(cfg.tables_dir / "na_soc_loco_per_cell.csv", index=False)
+
+    na_soh_lowo_df = pd.DataFrame(soh_bundle.loco_per_cell_rows)
+    if not na_soh_lowo_df.empty:
+        na_soh_lowo_df.to_csv(cfg.tables_dir / "na_soh_lowo_folds.csv", index=False)
+
+    cross_per_unit_df = pd.DataFrame(soc_bundle.cross_per_unit_rows + soh_bundle.cross_per_unit_rows)
+    if not cross_per_unit_df.empty:
+        cross_per_unit_df.to_csv(cfg.tables_dir / "cross_chemistry_per_unit.csv", index=False)
+
+    external_ncm_df = pd.DataFrame(soh_bundle.external_test_rows)
+    if not external_ncm_df.empty:
+        external_ncm_df.to_csv(cfg.tables_dir / "external_ncm_soh_test.csv", index=False)
+
     cv_seeds = (cfg.seed, cfg.seed + 59) if cfg.fast_mode else (cfg.seed, cfg.seed + 59, cfg.seed + 160)
     cv_rows = run_repeated_cell_cv(cfg, soc_df, "SoC", seeds=cv_seeds) + run_repeated_cell_cv(
         cfg, soh_df, "SoH", seeds=cv_seeds
@@ -74,7 +93,7 @@ def run_full_pipeline(cfg: PipelineConfig) -> dict:
     cv_df = pd.DataFrame(cv_rows)
     cv_df.to_csv(cfg.tables_dir / "repeated_cell_cv_results.csv", index=False)
 
-    print("[5/7] Few-Shot Cross-Chemistry Transfer Learning (XGBoost Residual/Warm-Start & Two-Phase GRU)...")
+    print("[5/7] Few-Shot Cross-Chemistry Transfer Learning (6-Fold LOCO SoC & Cross-Workbook Exploratory SoH)...")
     soc_tl = run_transfer_learning_experiments(cfg, soc_bundle)
     soh_tl = run_transfer_learning_experiments(cfg, soh_bundle)
     tl_df = pd.DataFrame(soc_tl.results_rows + soh_tl.results_rows)
@@ -88,11 +107,8 @@ def run_full_pipeline(cfg: PipelineConfig) -> dict:
         if "li_ion" in soh_bundle.within_tabular_phys
         else 0.01
     )
-    na_soh_mae = (
-        soh_bundle.within_tabular_phys["na_ion"]["XGBoost"].test_metrics["mae"]
-        if "na_ion" in soh_bundle.within_tabular_phys
-        else 0.015
-    )
+    na_soh_xgb_rows = [r for r in soh_bundle.within_rows if r["chemistry"] == "na_ion" and r["model"] == "XGBoost"]
+    na_soh_mae = float(na_soh_xgb_rows[0]["mae"]) if na_soh_xgb_rows else 0.025
 
     charging_rows, charging_traces = run_adaptive_charging_benchmark(
         li_soc_predictor=lambda X: li_soc_model.predict(X),
@@ -187,6 +203,9 @@ def run_full_pipeline(cfg: PipelineConfig) -> dict:
         plot_cross_chemistry_parity(soc_bundle, soh_bundle, cfg.figures_dir),
         plot_adaptive_charging_comparison(charging_rows, charging_traces, cfg.figures_dir),
     ]
+    fig7 = plot_na_soc_loco_per_cell(soc_bundle.loco_per_cell_rows, cfg.figures_dir)
+    if fig7 is not None:
+        figs.append(fig7)
 
     elapsed_s = round(time.perf_counter() - t_start, 2)
     summary = {
@@ -196,6 +215,19 @@ def run_full_pipeline(cfg: PipelineConfig) -> dict:
         "quality_audit": audit_report,
         "duckdb_analytics": duckdb_analytics,
         "data_mining": {k: v for k, v in mining_results.items() if k != "pca_payload"},
+        "unit_counts": {
+            "SoC": soc_bundle.unit_counts,
+            "SoH": soh_bundle.unit_counts,
+        },
+        "evaluation_modes": {
+            "SoC_cross_chemistry": soc_bundle.cross_chemistry_mode,
+            "SoH_cross_chemistry": soh_bundle.cross_chemistry_mode,
+            "na_soc_within": f"leave_one_cell_out_{soc_bundle.unit_counts.get('na_ion', 0)}_folds",
+            "na_soh_within": "exploratory_lowo_temp_confounded",
+        },
+        "external_ncm_soh_test": soh_bundle.external_test_rows,
+        "na_soh_lowo_folds": soh_bundle.loco_per_cell_rows,
+        "cross_chemistry_per_unit": soc_bundle.cross_per_unit_rows + soh_bundle.cross_per_unit_rows,
         "empirical_ocv_audit": {
             chem: {
                 "estimation_method": curve.estimation_method,
@@ -237,6 +269,10 @@ def run_full_pipeline(cfg: PipelineConfig) -> dict:
         tl_df=tl_df,
         charging_df=charging_df,
         cv_df=cv_df,
+        na_soc_loco_df=na_soc_loco_df,
+        na_soh_lowo_df=na_soh_lowo_df,
+        cross_per_unit_df=cross_per_unit_df,
+        external_ncm_df=external_ncm_df,
     )
     print(f"Done in {elapsed_s:.2f}s! Report written to: {report_path}")
     return summary

@@ -75,7 +75,7 @@ export const App: React.FC = () => {
           </div>
           <div>
             <div className="brand-title">Cross-Chemistry BMS 3D Digital Twin</div>
-            <div className="brand-sub">Li-Ion &amp; Na-Ion Adaptive Charging · Transfer Learning · Big Data Lakehouse</div>
+            <div className="brand-sub">Li-Ion &amp; Na-Ion Adaptive Charging · Transfer Learning · Columnar Out-of-Core Lakehouse</div>
           </div>
         </div>
 
@@ -106,7 +106,9 @@ export const App: React.FC = () => {
         {summary && (
           <div className={`status-pill ${isReal ? "" : "sim"}`}>
             <Cpu size={13} />
-            {isReal ? "Real Git LFS Datasets" : "Physics-Sim Fallback · Consuming urop_core/outputs"}
+            {isReal
+              ? `Real Lab Datasets (${summary.dataset_inventory.pulled_files}/${summary.dataset_inventory.total_files} files)`
+              : "Consuming urop_core/outputs"}
           </div>
         )}
       </header>
@@ -141,6 +143,7 @@ export const App: React.FC = () => {
             {activeTab === "charging" && <AdaptiveChargingLab precomputedTraces={traces} />}
             {activeTab === "cross_chem" && manifold && (
               <CrossChemistryView
+                summary={summary}
                 manifold={manifold}
                 domainShift={domainShift}
                 crossRows={crossRows}

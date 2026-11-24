@@ -1,0 +1,4 @@
+task,train_source,external_test_unit,n_rows,model,mae,rmse,r2
+SoH,nasa_li_ion_33_ordered_cells,li_ncm_25C,3351,LinearRegression,0.08175,0.09048,-1.67182
+SoH,nasa_li_ion_33_ordered_cells,li_ncm_25C,3351,RandomForest,0.11589,0.13039,-4.54811
+SoH,nasa_li_ion_33_ordered_cells,li_ncm_25C,3351,XGBoost,0.10559,0.12381,-4.00262

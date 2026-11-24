@@ -161,6 +161,10 @@ def run_data_mining_suite(
         if df.height == 0:
             continue
         li_sub = df.filter(pl.col("chemistry") == "li_ion")
+        if task == "SoH" and "data_provenance" in df.columns:
+            li_ord = li_sub.filter(pl.col("data_provenance") == "ordered_per_cell")
+            if li_ord.height >= 20:
+                li_sub = li_ord
         na_sub = df.filter(pl.col("chemistry") == "na_ion")
         if li_sub.height < 20 or na_sub.height < 20:
             continue

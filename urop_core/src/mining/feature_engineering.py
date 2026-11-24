@@ -71,7 +71,6 @@ PHYSICS_SOH_FEATURES: list[str] = [
     "temp_rise_ratio",
     "v_norm_int_ratio",
     "temp_norm",
-    "log_cycle_norm",
 ]
 
 
@@ -191,21 +190,49 @@ def build_gold_features(
         .drop(["_v_span", "_v_min", "_r_ref", "_dt"])
     )
 
-    # --- Cycle-level SoH Gold Features (normalized to each cell's BoL cycles 1..3) ---
-    bol_baselines = (
-        cyc.filter(pl.col("cycle_number") <= 3)
-        .group_by(["chemistry", "cell_id"])
-        .agg(
-            pl.col("discharge_duration_s").mean().alias("_dis_dur_0"),
-            pl.col("cc_duration_s").mean().alias("_cc_dur_0"),
-            pl.col("cv_duration_s").mean().alias("_cv_dur_0"),
-            pl.col("r_int_est_ohm").mean().alias("_r_int_0"),
-            pl.col("ica_peak").mean().alias("_ica_peak_0"),
-            pl.col("ica_v_norm_peak").mean().alias("_ica_v_0"),
-            pl.col("temp_rise_c").mean().alias("_temp_rise_0"),
-            pl.col("v_norm_integral").mean().alias("_v_int_0"),
+    # --- Cycle/Curve-level SoH Gold Features ---
+    # Ordered cells (NASA): normalize to genuine BoL cycles (cycle_number <= 3).
+    # Pooled unordered workbooks (Mendeley): normalize using purely unsupervised input quantiles
+    # (no SoH label use, no row-order dependence).
+    if "data_provenance" not in cyc.columns:
+        cyc = cyc.with_columns(pl.lit("ordered_per_cell").alias("data_provenance"))
+    if "sample_idx" not in cyc.columns:
+        cyc = cyc.with_columns(pl.col("cycle_number").fill_null(0).alias("sample_idx"))
+
+    ordered_cyc = cyc.filter(pl.col("data_provenance") == "ordered_per_cell")
+    pooled_cyc = cyc.filter(pl.col("data_provenance") != "ordered_per_cell")
+
+    bol_parts: list[pl.DataFrame] = []
+    if ordered_cyc.height > 0:
+        bol_parts.append(
+            ordered_cyc.filter(pl.col("cycle_number") <= 3)
+            .group_by(["chemistry", "cell_id"])
+            .agg(
+                pl.col("discharge_duration_s").mean().alias("_dis_dur_0"),
+                pl.col("cc_duration_s").mean().alias("_cc_dur_0"),
+                pl.col("cv_duration_s").mean().alias("_cv_dur_0"),
+                pl.col("r_int_est_ohm").mean().alias("_r_int_0"),
+                pl.col("ica_peak").mean().alias("_ica_peak_0"),
+                pl.col("ica_v_norm_peak").mean().alias("_ica_v_0"),
+                pl.col("temp_rise_c").mean().alias("_temp_rise_0"),
+                pl.col("v_norm_integral").mean().alias("_v_int_0"),
+            )
         )
-    )
+    if pooled_cyc.height > 0:
+        bol_parts.append(
+            pooled_cyc.group_by(["chemistry", "cell_id"]).agg(
+                pl.col("discharge_duration_s").quantile(0.95).alias("_dis_dur_0"),
+                pl.col("cc_duration_s").quantile(0.95).alias("_cc_dur_0"),
+                pl.col("cv_duration_s").quantile(0.95).alias("_cv_dur_0"),
+                pl.col("r_int_est_ohm").quantile(0.05).alias("_r_int_0"),
+                pl.col("ica_peak").quantile(0.95).alias("_ica_peak_0"),
+                pl.col("ica_v_norm_peak").median().alias("_ica_v_0"),
+                pl.col("temp_rise_c").quantile(0.05).alias("_temp_rise_0"),
+                pl.col("v_norm_integral").quantile(0.95).alias("_v_int_0"),
+            )
+        )
+
+    bol_baselines = pl.concat(bol_parts, how="vertical_relaxed") if bol_parts else pl.DataFrame()
 
     cyc_gold = (
         cyc.join(bol_baselines, on=["chemistry", "cell_id"], how="left")
@@ -223,7 +250,6 @@ def build_gold_features(
             (pl.col("temp_rise_c") / pl.col("_temp_rise_0").clip(0.1, None)).alias("temp_rise_ratio"),
             (pl.col("v_norm_integral") / pl.col("_v_int_0").clip(0.05, None)).alias("v_norm_int_ratio"),
             ((pl.col("mean_temp_c") - 25.0) / 25.0).alias("temp_norm"),
-            ((pl.col("cycle_number") + 1.0).log() / float(np.log(150.0))).alias("log_cycle_norm"),
         )
         .drop(
             [
@@ -237,7 +263,7 @@ def build_gold_features(
                 "_v_int_0",
             ]
         )
-        .sort(["chemistry", "cell_id", "cycle_number"])
+        .sort(["chemistry", "cell_id", "sample_idx"])
     )
 
     gold_soc_path = cfg.lake_dir / "gold" / "soc_features.parquet"
