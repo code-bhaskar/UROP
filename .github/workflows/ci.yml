@@ -1,0 +1,42 @@
+name: UROP CI — Core Pipeline Tests & 3D Frontend Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  urop-core-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: urop_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install urop_core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run pytest suite (real-format loaders, anti-circularity, lakehouse, cross-chemistry, charging)
+        run: pytest -v
+
+  fullstack-3d-frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fullstack_3d/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: fullstack_3d/frontend/package-lock.json
+      - name: Install dependencies and verify TypeScript + Vite build
+        run: |
+          npm ci
+          npm run build

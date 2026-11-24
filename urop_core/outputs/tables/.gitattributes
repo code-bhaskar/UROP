@@ -1,0 +1,2 @@
+# Keep small generated result tables as normal Git-tracked text CSVs (not Git LFS)
+*.csv -filter -diff -merge text

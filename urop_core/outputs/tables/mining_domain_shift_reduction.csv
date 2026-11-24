@@ -1,0 +1,7 @@
+task,representation,mmd2,mean_wasserstein_1,mean_psi
+SoC,1_raw_features,0.17672,0.5656,2.026
+SoC,2_physics_normalized,0.11318,0.4268,1.6545
+SoC,3_physics_ocv_coral_aligned,0.08516,0.3981,1.5183
+SoH,1_raw_features,0.56161,1.1056,6.26
+SoH,2_physics_normalized,0.22544,0.6434,4.0122
+SoH,3_physics_ocv_coral_aligned,0.21819,0.5939,2.9839
