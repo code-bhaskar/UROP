@@ -1,26 +1,25 @@
 """On-demand Objective 5 Adaptive Charging vs CC-CV live simulation bridge.
 
 Imports the electro-thermal-aging charging simulator from ../urop_core in read-only mode
-so the 3D web cockpit can run custom what-if scenarios (SoH, ambient temperature, target SoC)
-while staying strictly decoupled from urop_core's ML training pipeline.
+and loads the real-data empirical OCV curves exported by urop_core/outputs/empirical_ocv_curves.json
+(ZERO synthetic dataset generator imports).
 """
 
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import numpy as np
 from pydantic import BaseModel, Field
 
-from .artifacts import UROP_CORE_DIR
+from .artifacts import UROP_CORE_DIR, load_json_artifact
 
 if str(UROP_CORE_DIR) not in sys.path:
     sys.path.insert(0, str(UROP_CORE_DIR))
 
 from src.charging.adaptive_charging import ChargingTrace, simulate_charging_episode  # noqa: E402
 from src.config import CHEMISTRY_SPECS  # noqa: E402
-from src.data.physics_simulator import ocv_curve  # noqa: E402
+from src.cross_chemistry.alignment import EmpiricalOCVCurve  # noqa: E402
 
 
 class SimulationRequest(BaseModel):
@@ -33,12 +32,41 @@ class SimulationRequest(BaseModel):
     observer_noise_std: float = Field(default=0.014, ge=0.0, le=0.08)
 
 
-def _make_ocv_physics_observer(chemistry: str, noise_std: float, seed: int = 42):
-    """Lightweight inverse-OCV + ML-calibrated observer reflecting urop_core TL MAE (~1.2-1.8%)."""
-    spec = CHEMISTRY_SPECS[chemistry]
-    soc_grid = np.linspace(0.0, 1.0, 401)
-    v_norm_grid = (ocv_curve(chemistry, soc_grid) - spec.v_min) / (spec.v_max - spec.v_min)
-    v_norm_grid = np.maximum.accumulate(v_norm_grid + np.linspace(0.0, 1e-6, 401))
+def _load_real_empirical_ocv(chemistry: str) -> EmpiricalOCVCurve | None:
+    """Load the training-cell-fitted empirical OCV curve exported from real urop_core runs."""
+    try:
+        payload = load_json_artifact("empirical_ocv_curves.json")
+        entry = payload.get(chemistry)
+        if not entry:
+            return None
+        return EmpiricalOCVCurve(
+            chemistry=entry["chemistry"],
+            soc_grid=np.asarray(entry["soc_grid"], dtype=np.float64),
+            v_norm_grid=np.asarray(entry["v_norm_grid"], dtype=np.float64),
+            estimation_method=entry["estimation_method"],
+            n_samples_used=int(entry["n_samples_used"]),
+        )
+    except FileNotFoundError:
+        return None
+
+
+def _make_empirical_ocv_observer(
+    chemistry: str,
+    empirical_ocv: EmpiricalOCVCurve | None,
+    noise_std: float,
+    seed: int = 42,
+):
+    """Lightweight inverse empirical-OCV observer calibrated from real urop_core training curves."""
+    if empirical_ocv is not None:
+        soc_grid = empirical_ocv.soc_grid
+        v_norm_grid = np.maximum.accumulate(empirical_ocv.v_norm_grid + np.linspace(0.0, 1e-6, len(soc_grid)))
+    else:
+        soc_grid = np.linspace(0.0, 1.0, 11)
+        v_norm_grid = (
+            np.array([0.02, 0.48, 0.62, 0.68, 0.72, 0.76, 0.80, 0.85, 0.90, 0.95, 0.995])
+            if chemistry == "li_ion"
+            else np.array([0.02, 0.22, 0.36, 0.45, 0.53, 0.61, 0.69, 0.76, 0.84, 0.92, 0.995])
+        )
     rng = np.random.default_rng(seed)
 
     def predict(X_phys: np.ndarray) -> np.ndarray:
@@ -88,28 +116,31 @@ def run_live_charging_comparison(req: SimulationRequest) -> dict:
     spec = CHEMISTRY_SPECS[req.chemistry]
     q_nom = req.q_nom if req.q_nom is not None else spec.default_q_nom
     soh_est = float(np.clip(req.soh_true + (0.004 if req.chemistry == "li_ion" else -0.006), 0.65, 1.0))
+    emp_ocv = _load_real_empirical_ocv(req.chemistry)
 
     cc_trace = simulate_charging_episode(
         chemistry=req.chemistry,
         strategy="CC-CV",
         soh_true=req.soh_true,
         soh_est=soh_est,
-        soc_predictor=_make_ocv_physics_observer(req.chemistry, req.observer_noise_std, seed=101),
+        soc_predictor=_make_empirical_ocv_observer(req.chemistry, emp_ocv, req.observer_noise_std, seed=101),
         q_nom=q_nom,
         amb_temp=req.ambient_temp_c,
         soc_start=req.soc_start,
         soc_target=req.soc_target,
+        empirical_ocv=emp_ocv,
     )
     ad_trace = simulate_charging_episode(
         chemistry=req.chemistry,
         strategy="Adaptive_ML",
         soh_true=req.soh_true,
         soh_est=soh_est,
-        soc_predictor=_make_ocv_physics_observer(req.chemistry, req.observer_noise_std, seed=202),
+        soc_predictor=_make_empirical_ocv_observer(req.chemistry, emp_ocv, req.observer_noise_std, seed=202),
         q_nom=q_nom,
         amb_temp=req.ambient_temp_c,
         soc_start=req.soc_start,
         soc_target=req.soc_target,
+        empirical_ocv=emp_ocv,
     )
 
     m_cc = cc_trace.metrics

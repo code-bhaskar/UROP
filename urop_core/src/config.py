@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 
@@ -58,6 +59,7 @@ class PipelineConfig:
     """Paths, seeds, Big Data lakehouse settings, and experiment hyperparameters."""
 
     repo_root: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
+    dataset_root_override: Path | None = None
     seed: int = 42
 
     # Raw dataset directories in repository
@@ -65,13 +67,13 @@ class PipelineConfig:
     na_3_2ah_dir_name: str = "3.2Ah na-ion"
     na_10ah_dir_name: str = "10Ah na-ion"
 
-    # Big Data Lakehouse & Outputs
+    # Columnar Lakehouse & Outputs
     lake_dir_name: str = "data_lake"
     output_dir_name: str = "outputs"
 
-    # Downsampling stride for real high-frequency CSVs (1-10 Hz -> manageable Big Data batches)
-    real_csv_downsample: int = 20
-    max_rows_per_chemistry_soc: int = 18000
+    # Downsampling stride AFTER exact full-resolution Coulomb counting on real 1-10 Hz Arbin CSVs
+    real_csv_downsample: int = 120
+    max_rows_per_chemistry_soc: int = 35000
 
     # Sequence model settings (LSTM / GRU)
     seq_len: int = 12
@@ -88,7 +90,12 @@ class PipelineConfig:
 
     @property
     def dataset_root(self) -> Path:
-        # Look for raw LFS dataset folders in repo_root first, then parent (when housed under urop_core/)
+        if self.dataset_root_override is not None:
+            return Path(self.dataset_root_override)
+        env_root = os.environ.get("UROP_DATASET_ROOT")
+        if env_root:
+            return Path(env_root)
+        # Look for raw dataset folders in repo_root first, then parent (when housed under urop_core/)
         if (self.repo_root / self.nasa_li_dir_name).exists():
             return self.repo_root
         if (self.repo_root.parent / self.nasa_li_dir_name).exists():

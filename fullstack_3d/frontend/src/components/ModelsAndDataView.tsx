@@ -87,7 +87,12 @@ export const ModelsAndDataView: React.FC<ModelsAndDataViewProps> = ({ summary, w
           <div className="kpi-card">
             <div className="kpi-label">Silver Aging Cycles</div>
             <div className="kpi-value mono text-green">{audit.cycles.silver_rows.toLocaleString()}</div>
-            <div className="kpi-sub">16 cells (8 Li-ion + 8 Na-ion), strict cell-level splits</div>
+            <div className="kpi-sub">
+              {summary.duckdb_analytics.chemistry_summary
+                .map((c) => `${c.n_cells} ${c.chemistry === "li_ion" ? "NASA Li-ion" : "Wang Na-ion"}`)
+                .join(" + ")}{" "}
+              real cells (strict cell-level splits)
+            </div>
           </div>
           <div className="kpi-card">
             <div className="kpi-label">K-Means Operating Regimes</div>

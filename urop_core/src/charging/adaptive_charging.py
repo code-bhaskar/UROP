@@ -1,8 +1,16 @@
-"""Coupled Electro-Thermal-Aging Battery Charging Simulator: ML-Informed Adaptive Charging vs CC-CV Baseline.
+"""Coupled 2-RC Electro-Thermal-Aging Battery Charging Simulator: ML-Informed Adaptive Charging vs CC-CV Baseline.
 
 Note (per Proposal Section 5.7): This module performs a physics-based closed-loop simulation
 evaluating state-informed adaptive charging against CC-CV under defined voltage, current,
 and thermal safety constraints. It is a simulation study, not physical hardware validation.
+
+Anti-circularity design:
+- ZERO imports from `physics_simulator.py`.
+- The charging plant uses an independent 2-RC electro-thermal model (fast charge-transfer RC +
+  slow solid-state diffusion RC + charging hysteresis + +12% unmodeled resistance mismatch)
+  that intentionally differs from the controller's 1-RC online feature extractor.
+- When data-driven `EmpiricalOCVCurve` objects (fitted strictly on training cells) are supplied,
+  the plant uses those empirical OCV curves plus realistic charge-direction hysteresis.
 """
 
 from __future__ import annotations
@@ -13,7 +21,28 @@ from dataclasses import dataclass
 import numpy as np
 
 from src.config import CHEMISTRY_SPECS
-from src.data.physics_simulator import ocv_curve
+from src.cross_chemistry.alignment import EmpiricalOCVCurve
+
+# Independent empirical 11-point literature datasheet OCV lookup anchors (used only when no
+# training-estimated EmpiricalOCVCurve is supplied, e.g. standalone live what-if API calls).
+_SOC_TABLE = np.linspace(0.0, 1.0, 11)
+_DATASHEET_V_NORM = {
+    "li_ion": np.array([0.02, 0.48, 0.62, 0.68, 0.72, 0.76, 0.80, 0.85, 0.90, 0.95, 0.995]),
+    "na_ion": np.array([0.02, 0.22, 0.36, 0.45, 0.53, 0.61, 0.69, 0.76, 0.84, 0.92, 0.995]),
+}
+
+
+def _plant_ocv(chemistry: str, soc: float, empirical_ocv: EmpiricalOCVCurve | None = None) -> float:
+    """Evaluate charging plant equilibrium OCV(SoC) with slight nonlinear charge-knee mismatch."""
+    spec = CHEMISTRY_SPECS[chemistry]
+    s = float(np.clip(soc, 0.0, 1.0))
+    if empirical_ocv is not None:
+        v_norm = float(empirical_ocv.eval_v_norm(np.array([s]))[0])
+    else:
+        v_norm = float(np.interp(s, _SOC_TABLE, _DATASHEET_V_NORM[chemistry]))
+    # Subtle unmodeled charge-direction OCV hysteresis & high-SoC diffusion knee (+12 mV)
+    v_ocv = spec.v_min + v_norm * (spec.v_max - spec.v_min) + 0.012 * np.sin(np.pi * s)
+    return float(np.clip(v_ocv, spec.v_min, spec.v_max - 0.01))
 
 
 @dataclass
@@ -48,7 +77,8 @@ def _build_realtime_physics_feature_vec(
     """Build the 15-element PHYSICS_SOC_FEATURES vector online inside the charging loop."""
     spec = CHEMISTRY_SPECS[chemistry]
     v_span = spec.v_max - spec.v_min
-    r_ref = spec.r_int_bol * (spec.default_q_nom / q_nom) ** 0.72 * (1.0 + 1.5 * (1.0 - soh_est))
+    # Controller's nominal 1-RC resistance estimate (intentionally differs from 2-RC plant resistance!)
+    r_ref = spec.r_int_bol * (spec.default_q_nom / q_nom) ** 0.72 * (1.0 + 1.50 * (1.0 - soh_est))
 
     v_norm = (v - spec.v_min) / v_span
     c_rate = curr / q_nom
@@ -112,66 +142,67 @@ def simulate_charging_episode(
     soc_target: float = 0.90,
     dt_s: float = 10.0,
     max_time_s: float = 10800.0,
+    empirical_ocv: EmpiricalOCVCurve | None = None,
+    plant_mismatch_pct: float = 0.12,
 ) -> ChargingTrace:
-    """Simulate a single charging episode from soc_start to soc_target under strict safety constraints."""
+    """Simulate a charging episode on an independent 2-RC electro-thermal plant with plant–model mismatch."""
     spec = CHEMISTRY_SPECS[chemistry]
     q_nom = q_nom if q_nom is not None else spec.default_q_nom
     usable_cap = q_nom * soh_true
 
-    # Coupled electro-thermal parameters
-    r0_base = spec.r_int_bol * (spec.default_q_nom / q_nom) ** 0.72
-    aging_mult = 1.0 + 1.85 * (1.0 - soh_true)
-    c_th = 42.0 * (q_nom / 2.0) ** 0.75
+    # Independent 2-RC plant parameters (intentionally mismatched by +plant_mismatch_pct vs nominal spec!)
+    r0_base = spec.r_int_bol * (1.0 + plant_mismatch_pct) * (spec.default_q_nom / q_nom) ** 0.72
+    aging_mult = 1.0 + 1.95 * (1.0 - soh_true)
+    c_th = 42.0 * (1.0 - 0.06 * plant_mismatch_pct) * (q_nom / 2.0) ** 0.75
     h_a = 0.082 * (q_nom / 2.0) ** 0.60
 
+    # Two-branch polarization (fast charge-transfer + slow solid-state diffusion)
+    tau1 = 32.0 if chemistry == "li_ion" else 26.0
+    tau2 = 175.0 if chemistry == "li_ion" else 145.0
+    v_hyst_charge = 0.018 if chemistry == "li_ion" else 0.024
+
     n_max = int(max_time_s / dt_s) + 1
-    times = []
-    soc_trues = []
-    soc_ests = []
-    volts = []
-    c_rates = []
-    temps = []
+    times: list[float] = []
+    soc_trues: list[float] = []
+    soc_ests: list[float] = []
+    volts: list[float] = []
+    c_rates: list[float] = []
+    temps: list[float] = []
 
     soc = soc_start
-    soc_hat = soc_start
+    # Realistic initial observer offset (+1.5% SoC initial error to test observer convergence!)
+    soc_hat = float(np.clip(soc_start + 0.015, 0.0, 1.0))
     temp = amb_temp
-    v_rc = 0.0
-    tau1 = 35.0 if chemistry == "li_ion" else 28.0
+    v_rc1 = 0.0
+    v_rc2 = 0.0
 
-    # Energy & degradation accumulators
     e_in_wh = 0.0
     e_stored_wh = 0.0
-    deg_accum = 0.0  # Semi-empirical Arrhenius + high-SoC plating + C-rate stress (%)
+    deg_accum = 0.0
 
-    # Online feature rolling buffers for ML SoC observer
     hist_v = deque(maxlen=6)
     hist_c = deque(maxlen=6)
     hist_vir = deque(maxlen=6)
-    v_init = float(ocv_curve(chemistry, np.array([soc]))[0])
+    v_init = _plant_ocv(chemistry, soc, empirical_ocv)
     prev_v_norm = (v_init - spec.v_min) / (spec.v_max - spec.v_min)
     prev_c_rate = 0.0
 
-    # Conventional CC-CV rate vs Adaptive policy envelope
     cc_base_c_rate = 1.0 if chemistry == "li_ion" else 0.9
 
     for step in range(n_max):
         t_now = step * dt_s
         r0 = r0_base * aging_mult * np.exp(0.022 * (25.0 - temp))
-        r1 = r0 * 0.45
-        ocv = float(ocv_curve(chemistry, np.array([soc]))[0])
+        r1 = r0 * 0.42
+        r2 = r0 * 0.28  # Unmodeled slow diffusion resistance
+        ocv = _plant_ocv(chemistry, soc, empirical_ocv)
 
-        # Maximum current that respects upper cut-off voltage V_max
-        i_v_limit = max(0.0, (spec.v_max - ocv - v_rc) / max(r0, 1e-4))
+        i_v_limit = max(0.0, (spec.v_max - ocv - v_rc1 - v_rc2 - v_hyst_charge) / max(r0, 1e-4))
         c_v_limit = i_v_limit / q_nom
 
         if strategy == "CC-CV":
-            # Fixed CC up to V_max, then CV taper
             c_cmd = min(cc_base_c_rate, c_v_limit)
             c_cmd = max(0.05, c_cmd) if soc < soc_target else 0.0
         else:
-            # --- ML-State-Informed Multi-Stage Adaptive Charging Controller ---
-            # 1. SoC-stage profile (respects CC-CV nominal ceiling at low SoC, smoothly tapers at high SoC
-            #    to prevent Li/Na plating and excessive Joule heating)
             if soc_hat < 0.45:
                 c_soc = 1.00 if chemistry == "li_ion" else 0.90
             elif soc_hat < 0.65:
@@ -181,10 +212,8 @@ def simulate_charging_episode(
             else:
                 c_soc = 0.40 if chemistry == "li_ion" else 0.38
 
-            # 2. SoH-aware health derating (protects aged high-resistance cells from Joule heating & fade)
             soh_factor = float(np.clip(0.68 + 0.32 * ((soh_est - 0.70) / 0.30), 0.70, 1.00))
 
-            # 3. Thermal governor (smooth proportional derating above 28.5 C, strict safety cap at T_max)
             t_warn = 28.5
             if temp <= t_warn:
                 t_factor = 1.0
@@ -197,11 +226,15 @@ def simulate_charging_episode(
             c_cmd = max(0.05, c_cmd)
 
         curr = c_cmd * q_nom
-        alpha = np.exp(-dt_s / tau1)
-        v_rc = alpha * v_rc + r1 * (1.0 - alpha) * curr
-        v_term = min(spec.v_max, ocv + curr * r0 + v_rc)
+        alpha1 = np.exp(-dt_s / tau1)
+        alpha2 = np.exp(-dt_s / tau2)
+        v_rc1 = alpha1 * v_rc1 + r1 * (1.0 - alpha1) * curr
+        v_rc2 = alpha2 * v_rc2 + r2 * (1.0 - alpha2) * curr
+        v_term = min(spec.v_max, ocv + curr * r0 + v_rc1 + v_rc2 + v_hyst_charge)
 
-        # Online ML/TL SoC prediction fused with short-horizon Coulomb consistency (standard BMS observer)
+        # Innovation-gated adaptive complementary BMS observer (EKF-inspired polarization gating):
+        # Under heavy polarization (high C-rate or voltage-clamped aged CV), downweight raw voltage-ML
+        # innovation and clamp outliers so unmodeled 2-RC polarization cannot cause observer windup.
         if soc_predictor is not None:
             feat_vec = _build_realtime_physics_feature_vec(
                 chemistry=chemistry,
@@ -221,9 +254,16 @@ def simulate_charging_episode(
             prev_v_norm = float(feat_vec[0, 0])
             prev_c_rate = float(feat_vec[0, 1])
             ml_soc = float(soc_predictor(feat_vec)[0])
-            # Complementary filter (standard BMS observer gain: 0.96 Coulomb propagation + 0.04 ML drift correction)
-            soc_prop = float(np.clip(soc_hat + spec.coulombic_eff * curr * dt_s / (3600.0 * q_nom * soh_est), 0.0, 1.0))
-            soc_hat = float(np.clip(0.96 * soc_prop + 0.04 * ml_soc, 0.0, 1.0))
+
+            # Mild realistic current-sensor drift (0.5%) in Coulomb propagation
+            i_meas = curr * 1.005
+            soc_prop = float(np.clip(soc_hat + spec.coulombic_eff * i_meas * dt_s / (3600.0 * q_nom * soh_est), 0.0, 1.0))
+
+            # Dynamic polarization-aware gain + Huber-style innovation clamp
+            innovation = float(np.clip(ml_soc - soc_prop, -0.06, 0.06))
+            pol_damping = 1.0 / (1.0 + 4.5 * (c_cmd ** 2) + 3.0 * (1.0 - soh_est))
+            gain = 0.025 * pol_damping
+            soc_hat = float(np.clip(soc_prop + gain * innovation, 0.0, 1.0))
         else:
             soc_hat = soc
 
@@ -234,24 +274,21 @@ def simulate_charging_episode(
         c_rates.append(c_cmd)
         temps.append(temp)
 
-        # Energy accounting
         e_in_wh += (v_term * curr * dt_s) / 3600.0
         e_stored_wh += (ocv * curr * dt_s) / 3600.0
 
-        # Coupled degradation stress model:
-        # Combines Arrhenius thermal stress + C-rate^1.5 stress + high-SoC (>0.70) Li/Na plating penalty
         arrh_thermal = np.exp(0.055 * max(0.0, temp - 25.0))
         plating_risk = 1.0 + 4.2 * (max(0.0, soc - 0.68) ** 1.6) * (c_cmd ** 1.7)
         aging_vuln = 1.0 + 1.5 * (1.0 - soh_true)
-        base_deg_rate = 0.018 if chemistry == "li_ion" else 0.022  # % capacity fade per nominal full charge
+        base_deg_rate = 0.018 if chemistry == "li_ion" else 0.022
         dsoc = spec.coulombic_eff * curr * dt_s / (3600.0 * usable_cap)
         deg_accum += base_deg_rate * dsoc * arrh_thermal * (c_cmd ** 0.55) * plating_risk * aging_vuln
 
         if soc >= soc_target:
             break
 
-        # Advance physical state
-        q_gen = (curr ** 2) * (r0 + 0.5 * r1)
+        # 2-RC Joule heat dissipation
+        q_gen = (curr ** 2) * (r0 + 0.5 * r1 + 0.4 * r2)
         temp = temp + (q_gen - h_a * (temp - amb_temp)) * (dt_s / c_th)
         soc = float(np.clip(soc + dsoc, 0.0, 1.0))
 
@@ -267,6 +304,7 @@ def simulate_charging_episode(
         "soh_true": round(soh_true, 2),
         "soh_est": round(soh_est, 3),
         "strategy": strategy,
+        "plant_model": f"2RC_mismatched_+{int(round(plant_mismatch_pct * 100))}pct",
         "charge_time_min": round(float(times[-1]), 2),
         "peak_temp_c": round(float(np.max(temp_arr)), 2),
         "peak_temp_rise_c": round(float(np.max(temp_arr) - amb_temp), 2),
@@ -299,8 +337,10 @@ def run_adaptive_charging_benchmark(
     na_tl_soc_predictor,
     li_soh_mae: float = 0.01,
     na_soh_mae: float = 0.015,
+    empirical_ocv_curves: dict[str, EmpiricalOCVCurve] | None = None,
 ) -> tuple[list[dict], dict[str, ChargingTrace]]:
     """Compare Conventional CC-CV vs ML-State-Informed Adaptive Charging across Li-ion & Na-ion (Fresh & Aged)."""
+    ocvs = empirical_ocv_curves or {}
     scenarios = [
         ("li_ion", 0.98, min(1.0, 0.98 - li_soh_mae * 0.4), li_soc_predictor, 2.0),
         ("li_ion", 0.80, max(0.70, 0.80 + li_soh_mae * 0.5), li_soc_predictor, 2.0),
@@ -320,6 +360,7 @@ def run_adaptive_charging_benchmark(
                 soh_est=soh_est,
                 soc_predictor=predictor,
                 q_nom=q_nom,
+                empirical_ocv=ocvs.get(chem),
             )
             summary_rows.append(tr.metrics)
             traces[f"{tr.scenario}_{strat}"] = tr

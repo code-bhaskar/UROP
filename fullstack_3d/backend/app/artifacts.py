@@ -15,6 +15,7 @@ FIGURES_DIR = OUTPUTS_DIR / "figures"
 ALLOWED_TABLES: dict[str, str] = {
     "within_chemistry": "within_chemistry_results.csv",
     "cross_chemistry": "cross_chemistry_ablation_results.csv",
+    "repeated_cell_cv": "repeated_cell_cv_results.csv",
     "transfer_learning": "transfer_learning_results.csv",
     "adaptive_charging": "adaptive_charging_results.csv",
     "domain_shift": "mining_domain_shift_reduction.csv",

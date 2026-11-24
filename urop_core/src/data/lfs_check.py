@@ -1,8 +1,8 @@
-"""Inspect repository battery dataset files and detect Git LFS pointer stubs vs pulled data."""
+"""Inspect repository battery dataset files and verify real hardware datasets (NASA + Wang + Mendeley Excel)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.config import PipelineConfig
@@ -21,6 +21,8 @@ class DatasetInventory:
     total_declared_bytes: int
     pulled_files: int
     pointer_files: int
+    mendeley_xlsx_files: list[Path] = field(default_factory=list)
+    mendeley_pulled: bool = False
 
     @property
     def all_real_available(self) -> bool:
@@ -31,8 +33,10 @@ class DatasetInventory:
             "li_ion_file_count": len(self.li_ion_files),
             "na_ion_3_2ah_file_count": len(self.na_ion_3_2ah_files),
             "na_ion_10ah_file_count": len(self.na_ion_10ah_files),
+            "mendeley_xlsx_file_count": len(self.mendeley_xlsx_files),
             "li_ion_pulled": self.li_ion_pulled,
             "na_ion_pulled": self.na_ion_pulled,
+            "mendeley_pulled": self.mendeley_pulled,
             "all_real_available": self.all_real_available,
             "total_files": self.total_files,
             "pulled_files": self.pulled_files,
@@ -65,7 +69,7 @@ def is_lfs_pointer(path: Path) -> tuple[bool, int]:
 
 
 def inspect_datasets(cfg: PipelineConfig) -> DatasetInventory:
-    """Scan all expected dataset directories and report LFS pull status."""
+    """Scan all expected dataset directories (NASA .zip, Wang Arbin .CSV, Mendeley .xlsx) and report status."""
     li_files = sorted(cfg.nasa_li_dir.glob("*.zip")) if cfg.nasa_li_dir.exists() else []
     na_3_2_files = (
         sorted(p for p in cfg.na_3_2ah_dir.rglob("*") if p.suffix.lower() == ".csv")
@@ -77,13 +81,19 @@ def inspect_datasets(cfg: PipelineConfig) -> DatasetInventory:
         if cfg.na_10ah_dir.exists()
         else []
     )
+    mendeley_files = (
+        sorted(p for p in cfg.dataset_root.glob("Dataset*.xlsx"))
+        if cfg.dataset_root.exists()
+        else []
+    )
 
-    all_files = li_files + na_3_2_files + na_10_files
+    all_files = li_files + na_3_2_files + na_10_files + mendeley_files
     pulled = 0
     pointers = 0
     declared_bytes = 0
     li_pulled_count = 0
     na_pulled_count = 0
+    mendeley_pulled_count = 0
 
     for f in all_files:
         ptr, sz = is_lfs_pointer(f)
@@ -94,6 +104,8 @@ def inspect_datasets(cfg: PipelineConfig) -> DatasetInventory:
             pulled += 1
             if f in li_files:
                 li_pulled_count += 1
+            elif f in mendeley_files:
+                mendeley_pulled_count += 1
             else:
                 na_pulled_count += 1
 
@@ -101,9 +113,11 @@ def inspect_datasets(cfg: PipelineConfig) -> DatasetInventory:
         li_ion_files=li_files,
         na_ion_3_2ah_files=na_3_2_files,
         na_ion_10ah_files=na_10_files,
+        mendeley_xlsx_files=mendeley_files,
         li_ion_pulled=len(li_files) > 0 and li_pulled_count == len(li_files),
         na_ion_pulled=(len(na_3_2_files) + len(na_10_files)) > 0
         and na_pulled_count == (len(na_3_2_files) + len(na_10_files)),
+        mendeley_pulled=len(mendeley_files) > 0 and mendeley_pulled_count == len(mendeley_files),
         total_files=len(all_files),
         total_declared_bytes=declared_bytes,
         pulled_files=pulled,

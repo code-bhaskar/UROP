@@ -1,4 +1,4 @@
-"""Tests for Big Data Lakehouse (Polars/Parquet/DuckDB), Quality Audit, Feature Engineering, and Leak-Free Splits."""
+"""Tests for Columnar Lakehouse (Polars/Parquet/DuckDB), Quality Audit, Feature Engineering, and Leak-Free Splits."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+import pytest
 
 from src.config import PipelineConfig
 from src.data.lakehouse import ingest_to_bronze, run_duckdb_bigdata_analytics
@@ -24,7 +25,6 @@ from src.mining.splits import split_by_cell
 
 
 def test_coulomb_counting_and_soh_formulas() -> None:
-    # 1.0 A discharge for 1800 s on 2.0 Ah cell at eta=1.0 -> drops SoC from 1.0 to 0.75
     t = np.linspace(0.0, 1800.0, 181)
     i = np.full_like(t, -1.0)
     soc = verify_coulomb_counting_soc(i, t, usable_capacity_ah=2.0, soc_init=1.0, coulombic_eff=1.0)
@@ -35,21 +35,34 @@ def test_coulomb_counting_and_soh_formulas() -> None:
     assert np.allclose(soh, [1.0, 0.9, 0.8])
 
 
-def test_medallion_lakehouse_quality_audit_and_leak_free_splits(tmp_path: Path) -> None:
-    cfg = PipelineConfig(repo_root=tmp_path, seed=7, fast_mode=True)
-    _, mode, b_ts, b_cyc = ingest_to_bronze(cfg, force_fallback=True)
-    assert mode == "physics_simulated_fallback"
+def test_ingest_raises_when_real_datasets_missing(tmp_path: Path) -> None:
+    """Ensure NO fake fallback exists: missing real datasets must raise FileNotFoundError."""
+    cfg = PipelineConfig(repo_root=tmp_path, dataset_root_override=tmp_path, fast_mode=True)
+    with pytest.raises(FileNotFoundError, match="Real battery datasets"):
+        ingest_to_bronze(cfg)
+
+
+def test_medallion_lakehouse_quality_audit_and_leak_free_splits(
+    tmp_path: Path, real_format_dataset_root: Path
+) -> None:
+    out_root = tmp_path / "run_out"
+    cfg = PipelineConfig(
+        repo_root=out_root,
+        dataset_root_override=real_format_dataset_root,
+        seed=7,
+        fast_mode=True,
+    )
+    _, mode, b_ts, b_cyc = ingest_to_bronze(cfg)
+    assert mode == "real_dataset"
     assert b_ts.exists() and b_cyc.exists()
 
     s_ts, s_cyc, audit = audit_and_clean_bronze_to_silver(cfg, b_ts, b_cyc)
-    assert audit["timeseries"]["duplicates_removed"] >= 1
-    assert audit["timeseries"]["bounds_and_null_removed"] >= 1
-    assert audit["timeseries"]["isolation_forest_anomalies_removed"] >= 1
-    assert audit["timeseries"]["silver_rows"] < audit["timeseries"]["bronze_rows"]
+    assert audit["timeseries"]["silver_rows"] > 500
+    assert audit["cycles"]["silver_rows"] > 50
 
     analytics = run_duckdb_bigdata_analytics(s_ts, s_cyc, cfg.tables_dir)
     assert len(analytics["chemistry_summary"]) == 2
-    assert len(analytics["aging_summary"]) == 2
+    assert len(analytics["aging_summary"]) == 1  # Real Li-ion aging only (no fabricated Na-ion SoH)
 
     g_soc, g_soh = build_gold_features(cfg, s_ts, s_cyc)
     soc_df = pl.read_parquet(g_soc)
@@ -62,7 +75,6 @@ def test_medallion_lakehouse_quality_audit_and_leak_free_splits(tmp_path: Path) 
         assert col in soh_df.columns
         assert soh_df[col].null_count() == 0
 
-    # Strict cell-level disjointness (zero data leakage)
     for chem in ("li_ion", "na_ion"):
         sp = split_by_cell(soc_df, chem, seed=7)
         assert set(sp.train_cells).isdisjoint(sp.val_cells)

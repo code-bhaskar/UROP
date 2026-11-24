@@ -123,9 +123,11 @@ export const CrossChemistryView: React.FC<CrossChemistryViewProps> = ({
             <button className={`btn ${task === "SoC" ? "active" : ""}`} onClick={() => setTask("SoC")}>
               Task: SoC
             </button>
-            <button className={`btn ${task === "SoH" ? "active" : ""}`} onClick={() => setTask("SoH")}>
-              Task: SoH
-            </button>
+            {manifold.SoH && (
+              <button className={`btn ${task === "SoH" ? "active" : ""}`} onClick={() => setTask("SoH")}>
+                Task: SoH
+              </button>
+            )}
             <button
               className={`btn amber ${direction === "li_ion_to_na_ion" ? "active" : ""}`}
               onClick={() => setDirection("li_ion_to_na_ion")}

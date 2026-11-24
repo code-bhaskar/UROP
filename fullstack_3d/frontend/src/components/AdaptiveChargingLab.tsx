@@ -652,10 +652,11 @@ export const AdaptiveChargingLab: React.FC<AdaptiveChargingLabProps> = ({ precom
       </div>
 
       <div className="disclaimer-banner">
-        <strong>Proposal Section 5.7 Scientific Note:</strong> Adaptive charging performance is evaluated through a
-        coupled electro-thermal-aging simulation respecting chemistry-specific cut-off voltages (4.2 V Li-ion / 3.9 V
-        Na-ion) and thermal bounds (45 °C). It serves as a validated digital-twin simulation study rather than physical
-        hardware cycler validation.
+        <strong>Proposal Section 5.7 Scientific Note:</strong> Adaptive charging performance is evaluated through an
+        independent <strong>2-RC mismatched electro-thermal-aging simulation</strong> (+12% unmodeled plant resistance,
+        slow solid-state diffusion RC branch, charging hysteresis, and 0.5% current bias) respecting chemistry-specific
+        cut-off voltages (4.2 V Li-ion / 3.9 V Na-ion) and thermal bounds (45 °C). Per Proposal Section 5.7, this is a
+        physics-based simulation study and is <strong>not</strong> presented as physical hardware validation.
       </div>
     </div>
   );

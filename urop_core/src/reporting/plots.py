@@ -33,13 +33,18 @@ def plot_domain_alignment_pca(mining_results: dict, figures_dir: Path) -> Path:
 
     fig, axes = plt.subplots(2, 2, figsize=(11.5, 9.0), dpi=160)
     for row_idx, task in enumerate(["SoC", "SoH"]):
+        ax0, ax1 = axes[row_idx, 0], axes[row_idx, 1]
+        if task not in pca_payload:
+            for ax in (ax0, ax1):
+                ax.text(0.5, 0.5, f"{task} cross-chemistry manifold\nunavailable (single-chemistry aging)", ha="center", va="center")
+                ax.set_axis_off()
+            continue
         p = pca_payload[task]
         s_raw = shift_df[(shift_df["task"] == task) & (shift_df["representation"] == "1_raw_features")].iloc[0]
         s_aln = shift_df[
             (shift_df["task"] == task) & (shift_df["representation"] == "3_physics_ocv_coral_aligned")
         ].iloc[0]
 
-        ax0 = axes[row_idx, 0]
         ax0.scatter(p["raw_li"][:, 0], p["raw_li"][:, 1], s=14, alpha=0.45, c=PALETTE["li_ion"], label="Li-ion")
         ax0.scatter(p["raw_na"][:, 0], p["raw_na"][:, 1], s=14, alpha=0.45, c=PALETTE["na_ion"], label="Na-ion")
         ax0.set_title(
@@ -49,11 +54,10 @@ def plot_domain_alignment_pca(mining_results: dict, figures_dir: Path) -> Path:
         ax0.set_ylabel("PC 2")
         ax0.legend(frameon=True)
 
-        ax1 = axes[row_idx, 1]
         ax1.scatter(p["aligned_li"][:, 0], p["aligned_li"][:, 1], s=14, alpha=0.45, c=PALETTE["li_ion"], label="Li-ion")
         ax1.scatter(p["aligned_na"][:, 0], p["aligned_na"][:, 1], s=14, alpha=0.45, c=PALETTE["na_ion"], label="Na-ion")
         ax1.set_title(
-            f"{task} — Physics + OCV/CORAL Aligned\nMMD²={s_aln['mmd2']:.4f}, W1={s_aln['mean_wasserstein_1']:.3f}"
+            f"{task} — Physics + Empirical OCV/CORAL Aligned\nMMD²={s_aln['mmd2']:.4f}, W1={s_aln['mean_wasserstein_1']:.3f}"
         )
         ax1.set_xlabel("PC 1")
         ax1.set_ylabel("PC 2")
@@ -129,6 +133,10 @@ def plot_cross_chemistry_ablation(
 
     for ax, (task, direction, title) in zip(axes.ravel(), combos):
         sub = df_vis[(df_vis["task"] == task) & (df_vis["direction"] == direction)]
+        if sub.empty:
+            ax.text(0.5, 0.5, f"{title}\n(requires multi-cycle aging in both chemistries)", ha="center", va="center")
+            ax.set_axis_off()
+            continue
         sns.barplot(
             data=sub,
             x="model",
@@ -177,6 +185,10 @@ def plot_transfer_learning_curves(
 
     for ax, task in zip(axes, ["SoC", "SoH"]):
         sub = df[df["task"] == task]
+        if sub.empty:
+            ax.text(0.5, 0.5, f"{task} Transfer Learning unavailable\n(requires multi-cycle aging in both chemistries)", ha="center", va="center")
+            ax.set_axis_off()
+            continue
         # Horizontal line for Zero-Shot Aligned XGBoost
         zs = sub[sub["method"] == "ZeroShot_Aligned_XGBoost"]
         if not zs.empty:
@@ -223,6 +235,10 @@ def plot_cross_chemistry_parity(
         (axes[0], soc_bundle, "SoC", (0.0, 1.02)),
         (axes[1], soh_bundle, "SoH", (0.65, 1.03)),
     ]:
+        if "cross_li_ion_to_na_ion" not in bundle.sample_predictions:
+            ax.text(0.5, 0.5, f"{label} Cross-Chemistry Parity unavailable\n(single-chemistry aging data)", ha="center", va="center")
+            ax.set_axis_off()
+            continue
         p = bundle.sample_predictions["cross_li_ion_to_na_ion"]
         yt = p["y_true"]
         idx = np.linspace(0, len(yt) - 1, min(600, len(yt)), dtype=int)

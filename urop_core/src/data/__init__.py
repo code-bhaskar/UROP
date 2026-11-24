@@ -1,1 +1,1 @@
-"""Data ingestion, LFS inspection, physics fallback simulator, and Big Data lakehouse."""
+"""Real-dataset ingestion, inventory inspection, and Polars/Parquet/DuckDB lakehouse."""

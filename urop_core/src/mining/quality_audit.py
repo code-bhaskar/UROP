@@ -39,7 +39,7 @@ def audit_and_clean_bronze_to_silver(
 
     valid_voltage = (
         (pl.col("chemistry") == "li_ion")
-        & pl.col("voltage_v").is_between(li.v_min - 0.35, li.v_max + 0.35)
+        & pl.col("voltage_v").is_between(li.v_min - 0.65, li.v_max + 0.35)
     ) | (
         (pl.col("chemistry") == "na_ion")
         & pl.col("voltage_v").is_between(na.v_min - 0.35, na.v_max + 0.35)

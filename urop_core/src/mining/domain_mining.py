@@ -15,7 +15,7 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
 from src.config import PipelineConfig
-from src.cross_chemistry.alignment import CrossChemistryDomainAdapter
+from src.cross_chemistry.alignment import CrossChemistryDomainAdapter, estimate_empirical_ocv_curve
 from src.mining.feature_engineering import (
     PHYSICS_SOC_FEATURES,
     PHYSICS_SOH_FEATURES,
@@ -120,14 +120,18 @@ def run_data_mining_suite(
     )
     regime_summary.write_csv(tables_dir / "mining_operating_regimes.csv")
 
-    # 2. Mutual Information Feature Importance Ranking (per chemistry, SoC and SoH)
+    # 2. Mutual Information Feature Importance Ranking (per available chemistry, SoC and SoH)
     mi_rows: list[dict] = []
     for task, df, feat_cols, target_col in [
         ("SoC", soc_df, PHYSICS_SOC_FEATURES, "soc"),
         ("SoH", soh_df, PHYSICS_SOH_FEATURES, "soh"),
     ]:
+        if df.height == 0:
+            continue
         for chem in ["li_ion", "na_ion"]:
             sub = df.filter(pl.col("chemistry") == chem)
+            if sub.height < 20:
+                continue
             X = sub.select(feat_cols).to_numpy()
             y = sub[target_col].to_numpy()
             if len(X) > 3500:
@@ -146,7 +150,7 @@ def run_data_mining_suite(
     mi_df = pl.DataFrame(mi_rows)
     mi_df.write_csv(tables_dir / "mining_mutual_information.csv")
 
-    # 3. Quantitative Domain-Shift Analysis: Raw vs Physics-Normalized vs Physics+OCV+CORAL
+    # 3. Quantitative Domain-Shift Analysis: Raw vs Physics-Normalized vs Physics+EmpiricalOCV+CORAL
     shift_rows: list[dict] = []
     pca_payload: dict[str, dict] = {}
 
@@ -154,18 +158,24 @@ def run_data_mining_suite(
         ("SoC", soc_df, RAW_SOC_FEATURES, PHYSICS_SOC_FEATURES, True),
         ("SoH", soh_df, RAW_SOH_FEATURES, PHYSICS_SOH_FEATURES, False),
     ]:
+        if df.height == 0:
+            continue
         li_sub = df.filter(pl.col("chemistry") == "li_ion")
         na_sub = df.filter(pl.col("chemistry") == "na_ion")
+        if li_sub.height < 20 or na_sub.height < 20:
+            continue
 
         X_li_raw = li_sub.select(raw_cols).to_numpy()
         X_na_raw = na_sub.select(raw_cols).to_numpy()
         X_li_phys = li_sub.select(phys_cols).to_numpy()
         X_na_phys = na_sub.select(phys_cols).to_numpy()
 
-        # Fit unsupervised cross-chemistry adapter (Li-ion as source, Na-ion as target)
+        src_ocv = estimate_empirical_ocv_curve(li_sub, "li_ion") if use_ocv else None
+        tgt_ocv = estimate_empirical_ocv_curve(na_sub, "na_ion") if use_ocv else None
+
         adapter = CrossChemistryDomainAdapter(
-            src_chemistry="li_ion",
-            tgt_chemistry="na_ion",
+            src_ocv_curve=src_ocv,
+            tgt_ocv_curve=tgt_ocv,
             use_ocv_warp=use_ocv,
             use_coral=True,
             coral_reg=0.08,

@@ -142,12 +142,13 @@ def train_sequence_model(
         dropout=0.1,
     )
 
+    effective_bs = min(batch_size, max(16, len(X_train_seq) // 8))
     train_loader = DataLoader(
         TensorDataset(
             torch.tensor(X_train_seq, dtype=torch.float32),
             torch.tensor(y_train_seq, dtype=torch.float32),
         ),
-        batch_size=min(batch_size, max(16, len(X_train_seq))),
+        batch_size=effective_bs,
         shuffle=True,
     )
     Xva_t = torch.tensor(X_val_seq, dtype=torch.float32)

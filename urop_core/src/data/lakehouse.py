@@ -1,4 +1,4 @@
-"""Big Data Medallion Lakehouse built on Polars, Apache Parquet, and DuckDB SQL analytics."""
+"""Columnar Medallion Lakehouse built on Polars, Apache Parquet, and DuckDB SQL analytics (Real Data Only)."""
 
 from __future__ import annotations
 
@@ -10,14 +10,17 @@ import polars as pl
 
 from src.config import PipelineConfig
 from src.data.lfs_check import DatasetInventory, inspect_datasets
-from src.data.physics_simulator import generate_physics_fallback_datasets
-from src.data.real_loaders import load_real_na_ion_csvs, load_real_nasa_li_ion
+from src.data.real_loaders import (
+    load_real_mendeley_degradation_xlsx,
+    load_real_na_ion_csvs,
+    load_real_nasa_li_ion,
+)
 
 
 @dataclass
 class LakehouseArtifacts:
     inventory: DatasetInventory
-    data_mode: str  # "real_lfs_dataset" | "physics_simulated_fallback" | "hybrid"
+    data_mode: str  # Strictly "real_dataset"
     bronze_ts_path: Path
     bronze_cycles_path: Path
     silver_ts_path: Path
@@ -27,28 +30,44 @@ class LakehouseArtifacts:
     duckdb_analytics: dict
 
 
-def ingest_to_bronze(cfg: PipelineConfig, force_fallback: bool = False) -> tuple[DatasetInventory, str, Path, Path]:
-    """Ingest raw battery datasets into Bronze Apache Parquet files."""
+def ingest_to_bronze(cfg: PipelineConfig) -> tuple[DatasetInventory, str, Path, Path]:
+    """Ingest real NASA PCoE Li-ion and Wang et al. Na-ion datasets into Bronze Apache Parquet files.
+
+    Raises FileNotFoundError if the real dataset files are missing or still unpulled Git LFS pointers
+    (never falls back to fake/synthetic data).
+    """
     cfg.ensure_dirs()
     inv = inspect_datasets(cfg)
+
+    if not inv.all_real_available:
+        raise FileNotFoundError(
+            f"Real battery datasets are required (no synthetic fallback enabled). "
+            f"Checked dataset_root='{cfg.dataset_root}': found {inv.pulled_files}/{inv.total_files} real files "
+            f"({inv.pointer_files} LFS pointers). Ensure the real files are present in '{cfg.dataset_root}' "
+            f"or pass --dataset-root / set UROP_DATASET_ROOT."
+        )
 
     bronze_ts = cfg.lake_dir / "bronze" / "timeseries.parquet"
     bronze_cyc = cfg.lake_dir / "bronze" / "cycles.parquet"
 
-    if inv.all_real_available and not force_fallback:
-        li_ts, li_cyc = load_real_nasa_li_ion(cfg, inv.li_ion_files)
-        na_ts, na_cyc = load_real_na_ion_csvs(cfg, inv.na_ion_3_2ah_files, inv.na_ion_10ah_files)
-        ts_df = pl.concat([li_ts, na_ts], how="vertical_relaxed")
-        cyc_df = pl.concat([li_cyc, na_cyc], how="vertical_relaxed")
-        mode = "real_lfs_dataset"
-    else:
-        ts_df, cyc_df = generate_physics_fallback_datasets(cfg)
-        mode = "physics_simulated_fallback"
+    li_ts, li_cyc = load_real_nasa_li_ion(cfg, inv.li_ion_files)
+    na_ts, na_cyc = load_real_na_ion_csvs(cfg, inv.na_ion_3_2ah_files, inv.na_ion_10ah_files)
 
-    # Write columnar compressed Parquet (ZSTD) for Big Data out-of-core querying
+    ts_parts = [df for df in (li_ts, na_ts) if df.height > 0]
+    cyc_parts = [df for df in (li_cyc, na_cyc) if df.height > 0]
+    if inv.mendeley_pulled and inv.mendeley_xlsx_files:
+        mendeley_cyc = load_real_mendeley_degradation_xlsx(cfg, inv.mendeley_xlsx_files)
+        if mendeley_cyc.height > 0:
+            cyc_parts.append(mendeley_cyc)
+    if not ts_parts:
+        raise RuntimeError("Real dataset loaders produced 0 time-series rows. Check dataset directory contents.")
+
+    ts_df = pl.concat(ts_parts, how="diagonal_relaxed")
+    cyc_df = pl.concat(cyc_parts, how="diagonal_relaxed") if cyc_parts else pl.DataFrame()
+
     ts_df.write_parquet(bronze_ts, compression="zstd")
     cyc_df.write_parquet(bronze_cyc, compression="zstd")
-    return inv, mode, bronze_ts, bronze_cyc
+    return inv, "real_dataset", bronze_ts, bronze_cyc
 
 
 def run_duckdb_bigdata_analytics(
@@ -56,12 +75,11 @@ def run_duckdb_bigdata_analytics(
     silver_cycles_path: Path,
     tables_dir: Path,
 ) -> dict:
-    """Execute Big Data SQL analytical queries over Silver Parquet tables using DuckDB."""
+    """Execute SQL analytical queries over Silver Parquet tables using DuckDB."""
     con = duckdb.connect(database=":memory:")
     ts_p = str(silver_ts_path)
     cyc_p = str(silver_cycles_path)
 
-    # 1. Chemistry-level time-series statistics
     chem_summary = pl.from_arrow(
         con.sql(
             f"""
@@ -84,7 +102,6 @@ def run_duckdb_bigdata_analytics(
         ).to_arrow_table()
     )
 
-    # 2. Protocol & temperature breakdown
     protocol_summary = pl.from_arrow(
         con.sql(
             f"""
@@ -103,50 +120,55 @@ def run_duckdb_bigdata_analytics(
         ).to_arrow_table()
     )
 
-    # 3. Cycle aging degradation analytics using SQL window functions
-    aging_summary = pl.from_arrow(
-        con.sql(
-            f"""
-        WITH ranked AS (
+    # Guard for empty cycle parquet
+    cyc_count = con.sql(f"SELECT COUNT(*) FROM read_parquet('{cyc_p}')").fetchall()[0][0]
+    if cyc_count > 0:
+        aging_summary = pl.from_arrow(
+            con.sql(
+                f"""
+            WITH ranked AS (
+                SELECT
+                    chemistry,
+                    cell_id,
+                    cycle_number,
+                    soh,
+                    r_int_est_ohm,
+                    temp_rise_c,
+                    FIRST_VALUE(soh) OVER (PARTITION BY cell_id ORDER BY cycle_number) AS initial_soh,
+                    LAST_VALUE(soh) OVER (
+                        PARTITION BY cell_id ORDER BY cycle_number
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    ) AS final_soh,
+                    MAX(cycle_number) OVER (PARTITION BY cell_id) AS max_cycle
+                FROM read_parquet('{cyc_p}')
+            )
             SELECT
                 chemistry,
-                cell_id,
-                cycle_number,
-                soh,
-                r_int_est_ohm,
-                temp_rise_c,
-                FIRST_VALUE(soh) OVER (PARTITION BY cell_id ORDER BY cycle_number) AS initial_soh,
-                LAST_VALUE(soh) OVER (
-                    PARTITION BY cell_id ORDER BY cycle_number
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                ) AS final_soh,
-                MAX(cycle_number) OVER (PARTITION BY cell_id) AS max_cycle
-            FROM read_parquet('{cyc_p}')
+                COUNT(DISTINCT cell_id) AS n_aged_cells,
+                MAX(max_cycle) AS max_cycles,
+                ROUND(AVG(initial_soh), 4) AS avg_initial_soh,
+                ROUND(AVG(final_soh), 4) AS avg_final_soh,
+                ROUND(AVG((initial_soh - final_soh) / NULLIF(max_cycle, 0) * 100.0), 4) AS avg_fade_pct_per_cycle,
+                ROUND(AVG(r_int_est_ohm), 4) AS avg_r_int_ohm,
+                ROUND(AVG(temp_rise_c), 2) AS avg_temp_rise_c
+            FROM ranked
+            GROUP BY chemistry
+            ORDER BY chemistry
+            """
+            ).to_arrow_table()
         )
-        SELECT
-            chemistry,
-            COUNT(DISTINCT cell_id) AS n_aged_cells,
-            MAX(max_cycle) AS max_cycles,
-            ROUND(AVG(initial_soh), 4) AS avg_initial_soh,
-            ROUND(AVG(final_soh), 4) AS avg_final_soh,
-            ROUND(AVG((initial_soh - final_soh) / NULLIF(max_cycle, 0) * 100.0), 4) AS avg_fade_pct_per_cycle,
-            ROUND(AVG(r_int_est_ohm), 4) AS avg_r_int_ohm,
-            ROUND(AVG(temp_rise_c), 2) AS avg_temp_rise_c
-        FROM ranked
-        GROUP BY chemistry
-        ORDER BY chemistry
-        """
-        ).to_arrow_table()
-    )
+    else:
+        aging_summary = pl.DataFrame()
 
     con.close()
 
     chem_summary.write_csv(tables_dir / "bigdata_chemistry_summary.csv")
     protocol_summary.write_csv(tables_dir / "bigdata_protocol_temp_summary.csv")
-    aging_summary.write_csv(tables_dir / "bigdata_aging_summary.csv")
+    if aging_summary.height > 0:
+        aging_summary.write_csv(tables_dir / "bigdata_aging_summary.csv")
 
     return {
         "chemistry_summary": chem_summary.to_dicts(),
-        "aging_summary": aging_summary.to_dicts(),
+        "aging_summary": aging_summary.to_dicts() if aging_summary.height > 0 else [],
         "protocol_rows": protocol_summary.height,
     }

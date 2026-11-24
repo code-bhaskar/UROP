@@ -64,7 +64,7 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const isReal = summary?.data_mode === "real_lfs_dataset";
+  const isReal = summary?.data_mode === "real_dataset" || summary?.data_mode === "real_lfs_dataset";
 
   return (
     <div className="app-shell">

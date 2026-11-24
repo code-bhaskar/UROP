@@ -93,6 +93,13 @@ def run_transfer_learning_experiments(
     clip_bounds = (0.0, 1.0) if is_soc else (0.50, 1.05)
     seq_len = cfg.seq_len if is_soc else 8
 
+    if not bundle.cross_chemistry_available:
+        return TransferLearningBundle(
+            task_name=bundle.task_name,
+            results_rows=[],
+            best_tl_li_to_na_predictor=None,
+        )
+
     rows: list[dict] = []
     best_li_to_na_model = None
     best_li_to_na_rmse = float("inf")
