@@ -1,0 +1,414 @@
+{
+  "data_mode": "physics_simulated_fallback",
+  "elapsed_seconds": 244.61,
+  "dataset_inventory": {
+    "li_ion_file_count": 6,
+    "na_ion_3_2ah_file_count": 18,
+    "na_ion_10ah_file_count": 18,
+    "li_ion_pulled": false,
+    "na_ion_pulled": false,
+    "all_real_available": false,
+    "total_files": 42,
+    "pulled_files": 0,
+    "pointer_files": 42,
+    "total_declared_mb": 1343.16
+  },
+  "quality_audit": {
+    "timeseries": {
+      "bronze_rows": 27907,
+      "silver_rows": 27742,
+      "null_voltage_count": 20,
+      "null_temp_count": 21,
+      "null_current_count": 0,
+      "duplicates_removed": 27,
+      "bounds_and_null_removed": 82,
+      "isolation_forest_anomalies_removed": 56,
+      "retention_rate_pct": 99.41
+    },
+    "cycles": {
+      "bronze_rows": 2240,
+      "silver_rows": 2240,
+      "removed": 0
+    }
+  },
+  "duckdb_analytics": {
+    "chemistry_summary": [
+      {
+        "chemistry": "li_ion",
+        "n_records": 16241,
+        "n_cells": 8,
+        "min_voltage_v": 2.71,
+        "mean_voltage_v": 3.831,
+        "max_voltage_v": 4.237,
+        "mean_abs_current_a": 1.507,
+        "min_temp_c": 14.77,
+        "mean_temp_c": 29.93,
+        "max_temp_c": 44.84,
+        "mean_soc": 0.5972
+      },
+      {
+        "chemistry": "na_ion",
+        "n_records": 11501,
+        "n_cells": 8,
+        "min_voltage_v": 1.856,
+        "mean_voltage_v": 3.102,
+        "max_voltage_v": 3.935,
+        "mean_abs_current_a": 4.177,
+        "min_temp_c": -5.54,
+        "mean_temp_c": 26.59,
+        "max_temp_c": 53.96,
+        "mean_soc": 0.6437
+      }
+    ],
+    "aging_summary": [
+      {
+        "chemistry": "li_ion",
+        "n_aged_cells": 8,
+        "max_cycles": 140,
+        "avg_initial_soh": 0.9955,
+        "avg_final_soh": 0.6617,
+        "avg_fade_pct_per_cycle": 0.2385,
+        "avg_r_int_ohm": 0.1174,
+        "avg_temp_rise_c": 6.95
+      },
+      {
+        "chemistry": "na_ion",
+        "n_aged_cells": 8,
+        "max_cycles": 140,
+        "avg_initial_soh": 0.9968,
+        "avg_final_soh": 0.653,
+        "avg_fade_pct_per_cycle": 0.2455,
+        "avg_r_int_ohm": 0.0526,
+        "avg_temp_rise_c": 6.76
+      }
+    ],
+    "protocol_rows": 30
+  },
+  "data_mining": {
+    "kmeans_silhouette": 0.3075,
+    "operating_regimes": [
+      {
+        "operating_regime": 0,
+        "chemistry": "li_ion",
+        "n_samples": 6981,
+        "mean_v_norm": 0.925,
+        "mean_c_rate": 0.622,
+        "mean_temp_rise_c": 3.33,
+        "mean_soc": 0.599
+      },
+      {
+        "operating_regime": 0,
+        "chemistry": "na_ion",
+        "n_samples": 2739,
+        "mean_v_norm": 0.844,
+        "mean_c_rate": 0.413,
+        "mean_temp_rise_c": 4.65,
+        "mean_soc": 0.75
+      },
+      {
+        "operating_regime": 1,
+        "chemistry": "li_ion",
+        "n_samples": 5349,
+        "mean_v_norm": 0.706,
+        "mean_c_rate": -0.762,
+        "mean_temp_rise_c": 3.8,
+        "mean_soc": 0.656
+      },
+      {
+        "operating_regime": 1,
+        "chemistry": "na_ion",
+        "n_samples": 2104,
+        "mean_v_norm": 0.709,
+        "mean_c_rate": -0.989,
+        "mean_temp_rise_c": 4.27,
+        "mean_soc": 0.798
+      },
+      {
+        "operating_regime": 2,
+        "chemistry": "li_ion",
+        "n_samples": 3879,
+        "mean_v_norm": 0.636,
+        "mean_c_rate": -0.885,
+        "mean_temp_rise_c": 4.06,
+        "mean_soc": 0.515
+      },
+      {
+        "operating_regime": 2,
+        "chemistry": "na_ion",
+        "n_samples": 4024,
+        "mean_v_norm": 0.596,
+        "mean_c_rate": -0.061,
+        "mean_temp_rise_c": 4.43,
+        "mean_soc": 0.51
+      },
+      {
+        "operating_regime": 3,
+        "chemistry": "li_ion",
+        "n_samples": 32,
+        "mean_v_norm": 0.392,
+        "mean_c_rate": -0.96,
+        "mean_temp_rise_c": 6.44,
+        "mean_soc": 0.319
+      },
+      {
+        "operating_regime": 3,
+        "chemistry": "na_ion",
+        "n_samples": 2634,
+        "mean_v_norm": 0.56,
+        "mean_c_rate": -0.652,
+        "mean_temp_rise_c": 11.0,
+        "mean_soc": 0.614
+      }
+    ],
+    "domain_shift": [
+      {
+        "task": "SoC",
+        "representation": "1_raw_features",
+        "mmd2": 0.29299,
+        "mean_wasserstein_1": 0.8003,
+        "mean_psi": 1.7331
+      },
+      {
+        "task": "SoC",
+        "representation": "2_physics_normalized",
+        "mmd2": 0.10916,
+        "mean_wasserstein_1": 0.4908,
+        "mean_psi": 0.9546
+      },
+      {
+        "task": "SoC",
+        "representation": "3_physics_ocv_coral_aligned",
+        "mmd2": 0.09169,
+        "mean_wasserstein_1": 0.3941,
+        "mean_psi": 0.5938
+      },
+      {
+        "task": "SoH",
+        "representation": "1_raw_features",
+        "mmd2": 0.67047,
+        "mean_wasserstein_1": 1.1129,
+        "mean_psi": 4.101
+      },
+      {
+        "task": "SoH",
+        "representation": "2_physics_normalized",
+        "mmd2": 0.0649,
+        "mean_wasserstein_1": 0.2571,
+        "mean_psi": 0.2897
+      },
+      {
+        "task": "SoH",
+        "representation": "3_physics_ocv_coral_aligned",
+        "mmd2": 0.05991,
+        "mean_wasserstein_1": 0.266,
+        "mean_psi": 0.3503
+      }
+    ],
+    "top_mi_soc_li": [
+      {
+        "task": "SoC",
+        "chemistry": "li_ion",
+        "feature": "v_ir_comp_roll_mean",
+        "mutual_information": 1.1024
+      },
+      {
+        "task": "SoC",
+        "chemistry": "li_ion",
+        "feature": "v_ir_comp_norm",
+        "mutual_information": 0.8993
+      },
+      {
+        "task": "SoC",
+        "chemistry": "li_ion",
+        "feature": "temp_norm",
+        "mutual_information": 0.7166
+      },
+      {
+        "task": "SoC",
+        "chemistry": "li_ion",
+        "feature": "v_norm_roll_mean",
+        "mutual_information": 0.704
+      },
+      {
+        "task": "SoC",
+        "chemistry": "li_ion",
+        "feature": "p_norm",
+        "mutual_information": 0.6636
+      }
+    ],
+    "top_mi_soc_na": [
+      {
+        "task": "SoC",
+        "chemistry": "na_ion",
+        "feature": "v_ir_comp_roll_mean",
+        "mutual_information": 1.6566
+      },
+      {
+        "task": "SoC",
+        "chemistry": "na_ion",
+        "feature": "v_ir_comp_norm",
+        "mutual_information": 1.4428
+      },
+      {
+        "task": "SoC",
+        "chemistry": "na_ion",
+        "feature": "v_norm_roll_mean",
+        "mutual_information": 0.9783
+      },
+      {
+        "task": "SoC",
+        "chemistry": "na_ion",
+        "feature": "v_norm",
+        "mutual_information": 0.9062
+      },
+      {
+        "task": "SoC",
+        "chemistry": "na_ion",
+        "feature": "v_norm_sq",
+        "mutual_information": 0.9054
+      }
+    ],
+    "top_mi_soh_li": [
+      {
+        "task": "SoH",
+        "chemistry": "li_ion",
+        "feature": "dis_dur_ratio",
+        "mutual_information": 2.4202
+      },
+      {
+        "task": "SoH",
+        "chemistry": "li_ion",
+        "feature": "cv_cc_ratio",
+        "mutual_information": 2.2165
+      },
+      {
+        "task": "SoH",
+        "chemistry": "li_ion",
+        "feature": "cc_dur_ratio",
+        "mutual_information": 2.0322
+      },
+      {
+        "task": "SoH",
+        "chemistry": "li_ion",
+        "feature": "log_cycle_norm",
+        "mutual_information": 1.9254
+      },
+      {
+        "task": "SoH",
+        "chemistry": "li_ion",
+        "feature": "r_int_ratio",
+        "mutual_information": 1.922
+      }
+    ],
+    "top_mi_soh_na": [
+      {
+        "task": "SoH",
+        "chemistry": "na_ion",
+        "feature": "dis_dur_ratio",
+        "mutual_information": 2.3516
+      },
+      {
+        "task": "SoH",
+        "chemistry": "na_ion",
+        "feature": "cv_cc_ratio",
+        "mutual_information": 2.2529
+      },
+      {
+        "task": "SoH",
+        "chemistry": "na_ion",
+        "feature": "cc_dur_ratio",
+        "mutual_information": 2.0395
+      },
+      {
+        "task": "SoH",
+        "chemistry": "na_ion",
+        "feature": "ica_peak_ratio",
+        "mutual_information": 1.9215
+      },
+      {
+        "task": "SoH",
+        "chemistry": "na_ion",
+        "feature": "log_cycle_norm",
+        "mutual_information": 1.9029
+      }
+    ]
+  },
+  "splits": {
+    "SoC": {
+      "li_ion": {
+        "train_cells": [
+          "B0007",
+          "B0018",
+          "B0025",
+          "B0027",
+          "B0028"
+        ],
+        "val_cells": [
+          "B0006"
+        ],
+        "test_cells": [
+          "B0005",
+          "B0026"
+        ]
+      },
+      "na_ion": {
+        "train_cells": [
+          "na_10.0Ah_bat4",
+          "na_10.0Ah_bat6",
+          "na_3.2Ah_bat2",
+          "na_3.2Ah_bat5",
+          "na_3.2Ah_bat7"
+        ],
+        "val_cells": [
+          "na_3.2Ah_bat1"
+        ],
+        "test_cells": [
+          "na_10.0Ah_bat3",
+          "na_10.0Ah_bat8"
+        ]
+      }
+    },
+    "SoH": {
+      "li_ion": {
+        "train_cells": [
+          "B0007",
+          "B0018",
+          "B0025",
+          "B0027",
+          "B0028"
+        ],
+        "val_cells": [
+          "B0006"
+        ],
+        "test_cells": [
+          "B0005",
+          "B0026"
+        ]
+      },
+      "na_ion": {
+        "train_cells": [
+          "na_10.0Ah_bat4",
+          "na_10.0Ah_bat6",
+          "na_3.2Ah_bat2",
+          "na_3.2Ah_bat5",
+          "na_3.2Ah_bat7"
+        ],
+        "val_cells": [
+          "na_3.2Ah_bat1"
+        ],
+        "test_cells": [
+          "na_10.0Ah_bat3",
+          "na_10.0Ah_bat8"
+        ]
+      }
+    }
+  },
+  "figures": [
+    "outputs/figures/fig1_domain_alignment_pca.png",
+    "outputs/figures/fig2_within_chemistry_benchmarks.png",
+    "outputs/figures/fig3_cross_chemistry_ablation.png",
+    "outputs/figures/fig4_transfer_learning_curves.png",
+    "outputs/figures/fig5_cross_chemistry_parity.png",
+    "outputs/figures/fig6_adaptive_vs_cccv_charging.png"
+  ]
+}
