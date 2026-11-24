@@ -1,0 +1,9 @@
+chemistry,scenario,soh_true,soh_est,strategy,charge_time_min,peak_temp_c,peak_temp_rise_c,mean_temp_rise_c,energy_efficiency_pct,estimated_degradation_pct,soc_observer_mae,max_voltage_v,safety_limits_respected
+li_ion,li_ion_soh98,0.98,0.978,CC-CV,49.5,29.71,4.71,3.87,94.44,0.0184,0.0956,4.2,True
+li_ion,li_ion_soh98,0.98,0.978,Adaptive_ML,71.0,29.25,4.25,2.42,95.42,0.015,0.0854,4.149,True
+li_ion,li_ion_soh80,0.8,0.802,CC-CV,44.67,30.85,5.85,4.37,93.3,0.0228,0.0567,4.2,True
+li_ion,li_ion_soh80,0.8,0.802,Adaptive_ML,86.0,28.32,3.32,1.5,95.77,0.0144,0.1715,4.155,True
+na_ion,na_ion_soh98,0.98,0.978,CC-CV,52.83,28.99,3.99,3.36,94.17,0.0214,0.1087,3.863,True
+na_ion,na_ion_soh98,0.98,0.978,Adaptive_ML,73.0,28.67,3.67,2.29,95.18,0.0175,0.0534,3.766,True
+na_ion,na_ion_soh80,0.8,0.802,CC-CV,43.17,30.12,5.12,4.18,92.57,0.0282,0.1302,3.9,True
+na_ion,na_ion_soh80,0.8,0.802,Adaptive_ML,76.83,28.16,3.16,1.86,94.97,0.0188,0.0542,3.77,True
